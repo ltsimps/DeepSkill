@@ -25,6 +25,11 @@ const initialState: ThemeProviderState = {
 
 const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
 
+function getSystemTheme(): "dark" | "light" {
+  if (typeof window === 'undefined') return "light"
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+}
+
 export function ThemeProvider({
   children,
   defaultTheme = "system",
@@ -33,64 +38,62 @@ export function ThemeProvider({
   enableSystem = true,
   ...props
 }: ThemeProviderProps) {
-  const [theme, setTheme] = useState<Theme>(
-    () => (localStorage.getItem(storageKey) as Theme) || defaultTheme
-  )
-
+  const [theme, setTheme] = useState<Theme>(defaultTheme)
   const [activeTheme, setActiveTheme] = useState<ThemeConfig>(defaultTheme)
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
-    const root = window.document.documentElement
-
-    if (attribute === "class") {
-      root.classList.remove("light", "dark")
-
-      if (theme === "system") {
-        const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-          .matches
-          ? "dark"
-          : "light"
-
-        root.classList.add(systemTheme)
-        return
-      }
-
-      root.classList.add(theme)
-    } else {
-      if (theme === "system") {
-        const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-          .matches
-          ? "dark"
-          : "light"
-
-        root.setAttribute(attribute, systemTheme)
-        return
-      }
-
-      root.setAttribute(attribute, theme)
+    setMounted(true)
+    const savedTheme = typeof window !== 'undefined'
+      ? localStorage.getItem(storageKey) as Theme
+      : null
+    if (savedTheme) {
+      setTheme(savedTheme)
     }
-  }, [theme, attribute])
+  }, [storageKey])
 
   useEffect(() => {
-    const newTheme = themes.find((t) => t.name.toLowerCase() === theme) || defaultTheme
-    setActiveTheme(newTheme)
+    if (!mounted) return
 
-    // Apply theme colors to CSS variables
     const root = window.document.documentElement
-    const mode = root.classList.contains("dark") ? "dark" : "light"
+    const isDark = theme === "system" ? getSystemTheme() === "dark" : theme === "dark"
 
-    Object.entries(newTheme.colors).forEach(([key, value]) => {
-      root.style.setProperty(`--${key}`, value[mode])
-    })
-  }, [theme])
+    root.classList.remove("light", "dark")
+    root.classList.add(isDark ? "dark" : "light")
+
+    if (attribute !== "class") {
+      root.setAttribute(attribute, isDark ? "dark" : "light")
+    }
+  }, [theme, attribute, mounted])
+
+  useEffect(() => {
+    if (!mounted) return
+
+    const root = window.document.documentElement
+    const isDark = root.classList.contains("dark")
+    const currentTheme = themes.find((t) => t.name.toLowerCase() === theme) || defaultTheme
+    setActiveTheme(currentTheme)
+
+    if (currentTheme.colors) {
+      Object.entries(currentTheme.colors).forEach(([key, value]) => {
+        root.style.setProperty(`--${key}`, value[isDark ? "dark" : "light"])
+      })
+    }
+  }, [theme, mounted])
 
   const value = {
     theme,
     setTheme: (theme: Theme) => {
-      localStorage.setItem(storageKey, theme)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(storageKey, theme)
+      }
       setTheme(theme)
     },
     activeTheme,
+  }
+
+  if (!mounted) {
+    return <>{children}</>
   }
 
   return (

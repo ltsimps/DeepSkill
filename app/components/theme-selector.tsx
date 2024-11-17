@@ -11,7 +11,7 @@ import {
 import { cn } from "~/lib/utils";
 
 export function ThemeSelector() {
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, activeTheme } = useTheme();
 
   return (
     <DropdownMenu>
@@ -22,26 +22,35 @@ export function ThemeSelector() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {themes.map((t) => (
-          <DropdownMenuItem
-            key={t.name}
-            onClick={() => setTheme(t.name.toLowerCase() as any)}
-            className="flex items-center justify-between"
-          >
-            <div className="flex items-center gap-2">
-              <div
-                className="h-4 w-4 rounded-full"
-                style={{
-                  backgroundColor: `hsl(${t.colors.primary.light})`,
-                }}
-              />
-              {t.name}
-            </div>
-            {theme === t.name.toLowerCase() && (
-              <Check className="h-4 w-4" />
-            )}
-          </DropdownMenuItem>
-        ))}
+        {themes.map((t) => {
+          const themeName = t.name.toLowerCase();
+          const isActive = theme === themeName;
+          const primaryColor = t.colors?.primary?.light || "#000000";
+
+          return (
+            <DropdownMenuItem
+              key={t.name}
+              onClick={() => setTheme(themeName as any)}
+              className={cn(
+                "flex items-center justify-between",
+                isActive && "bg-accent"
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <div
+                  className="h-4 w-4 rounded-full"
+                  style={{
+                    backgroundColor: `hsl(${primaryColor})`,
+                  }}
+                />
+                {t.name}
+              </div>
+              {isActive && (
+                <Check className="h-4 w-4" />
+              )}
+            </DropdownMenuItem>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );
