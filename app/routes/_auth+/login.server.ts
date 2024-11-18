@@ -28,10 +28,11 @@ export async function handleNewSession(
 	},
 	responseInit?: ResponseInit,
 ) {
-	const verification = await prisma.verification.findUnique({
+	const verification = await prisma.verification.findFirst({
 		select: { id: true },
 		where: {
-			target_type: { target: session.userId, type: twoFAVerificationType },
+			target: session.userId,
+			type: twoFAVerificationType,
 		},
 	})
 	const userHasTwoFactor = Boolean(verification)
@@ -147,9 +148,9 @@ export async function shouldRequestTwoFA(request: Request) {
 	const userId = await getUserId(request)
 	if (!userId) return false
 	// if it's over two hours since they last verified, we should request 2FA again
-	const userHasTwoFA = await prisma.verification.findUnique({
+	const userHasTwoFA = await prisma.verification.findFirst({
 		select: { id: true },
-		where: { target_type: { target: userId, type: twoFAVerificationType } },
+		where: { target: userId, type: twoFAVerificationType },
 	})
 	if (!userHasTwoFA) return false
 	const verifiedTime = authSession.get(verifiedTimeKey) ?? new Date(0)

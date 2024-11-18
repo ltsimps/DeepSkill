@@ -163,7 +163,7 @@ function Document({
 	theme?: Theme
 	env?: Record<string, string>
 }) {
-	const allowIndexing = ENV.ALLOW_INDEXING !== 'false'
+	const allowIndexing = env.ALLOW_INDEXING !== 'false'
 	return (
 		<html lang="en" className={`${theme} h-full overflow-x-hidden`}>
 			<head>
@@ -172,7 +172,7 @@ function Document({
 				<meta charSet="utf-8" />
 				<meta name="viewport" content="width=device-width,initial-scale=1" />
 				{allowIndexing ? null : (
-					<meta name="robots" content="noindex, nofollow" />
+					<meta name="robots" content="noindex,nofollow" />
 				)}
 				<Links />
 			</head>

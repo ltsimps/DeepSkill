@@ -11,68 +11,21 @@ datasource db {
 }
 
 model User {
-  id       String  @id @default(cuid())
-  email    String  @unique
-  username String  @unique
+  id       String @id @default(cuid())
+  email    String @unique
+  username String @unique
   name     String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  image       UserImage?
   password    Password?
   notes       Note[]
-  roles       Role[]
-  sessions    Session[]
+  roles       Role[]     @relation("RoleToUser")
   connections Connection[]
-}
-
-model Note {
-  id      String @id @default(cuid())
-  title   String
-  content String
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  ownerId String
-
-  images NoteImage[]
-
-  // non-unique foreign key
-  @@index([ownerId])
-  // This helps our order by in the user search a LOT
-  @@index([ownerId, updatedAt])
-}
-
-model NoteImage {
-  id          String  @id @default(cuid())
-  altText     String?
-  contentType String
-  blob        Bytes
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  note   Note   @relation(fields: [noteId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  noteId String
-
-  // non-unique foreign key
-  @@index([noteId])
-}
-
-model UserImage {
-  id          String  @id @default(cuid())
-  altText     String?
-  contentType String
-  blob        Bytes
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  userId String @unique
+  sessions    Session[]
+  image       UserImage?
+  problemProgressions ProblemProgression[]
 }
 
 model Password {
@@ -80,6 +33,66 @@ model Password {
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   userId String @unique
+}
+
+model Note {
+  id      String @id @default(cuid())
+  title   String
+  content String
+  images  NoteImage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  ownerId String
+}
+
+model NoteImage {
+  id          String  @id @default(cuid())
+  altText     String?
+  contentType String
+  blob        Bytes
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  note        Note     @relation(fields: [noteId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  noteId      String
+}
+
+model UserImage {
+  id          String  @id @default(cuid())
+  altText     String?
+  contentType String
+  blob        Bytes
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  userId      String   @unique
+}
+
+model Role {
+  id          String @id @default(cuid())
+  name        String @unique
+  description String @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users       User[]       @relation("RoleToUser")
+  permissions Permission[] @relation("PermissionToRole")
+}
+
+model Permission {
+  id          String @id @default(cuid())
+  action      String
+  entity      String
+  access      String
+  description String @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  roles Role[] @relation("PermissionToRole")
 }
 
 model Session {
@@ -91,67 +104,6 @@ model Session {
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   userId String
-
-  // non-unique foreign key
-  @@index([userId])
-}
-
-model Permission {
-  id          String @id @default(cuid())
-  action      String // e.g. create, read, update, delete
-  entity      String // e.g. note, user, etc.
-  access      String // e.g. own or any
-  description String @default("")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  roles Role[]
-
-  @@unique([action, entity, access])
-}
-
-model Role {
-  id          String @id @default(cuid())
-  name        String @unique
-  description String @default("")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  users       User[]
-  permissions Permission[]
-}
-
-model Verification {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-
-  /// The type of verification, e.g. "email" or "phone"
-  type String
-
-  /// The thing we're trying to verify, e.g. a user's email or phone number
-  target String
-
-  /// The secret key used to generate the otp
-  secret String
-
-  /// The algorithm used to generate the otp
-  algorithm String
-
-  /// The number of digits in the otp
-  digits Int
-
-  /// The number of seconds the otp is valid for
-  period Int
-
-  /// The valid characters for the otp
-  charSet String
-
-  /// When it's safe to delete this verification
-  expiresAt DateTime?
-
-  @@unique([target, type])
 }
 
 model Connection {
@@ -166,4 +118,69 @@ model Connection {
   userId String
 
   @@unique([providerName, providerId])
+}
+
+model Verification {
+  id        String    @id @default(cuid())
+  createdAt DateTime  @default(now())
+  type      String
+  target    String
+  secret    String
+  algorithm String
+  digits    Int
+  period    Int
+  charSet   String
+  expiresAt DateTime?
+
+  @@unique([target, type])
+}
+
+model Problem {
+  id          String   @id @default(cuid())
+  type        String   // 'FILL_IN' or 'SCENARIO'
+  difficulty  String   // 'EASY', 'MEDIUM', or 'HARD'
+  language    String   // 'JAVASCRIPT', 'PYTHON', or 'TYPESCRIPT'
+  title       String
+  description String
+  source      String   // 'SEEDED' or 'GPT'
+  lastUsed    DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Common fields
+  hints       String   // Stored as JSON string
+  tags        String   // Stored as JSON string
+  timeLimit   Int      @default(300) // Time limit in seconds
+
+  // Fields for FILL_IN type
+  template        String?  // Code with markers for fill-in sections
+  fillInSections  String?  // JSON string of {id, start, end, solution}[]
+
+  // Fields for SCENARIO type
+  startingCode   String?
+  solution       String?
+  testCases      String?  // JSON string of test cases
+
+  // Relations
+  progressions     ProblemProgression[]
+}
+
+model ProblemProgression {
+  id               String   @id @default(cuid())
+  easinessFactor   Float    @default(2.5) // SM-2 E-Factor
+  repetitionNumber Int      @default(0)   // SM-2 n
+  nextReviewDate   DateTime @default(now())
+  lastScore        Float?   // 0-5 scale
+  lastAttempted    DateTime?
+  
+  // Relations
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  problem   Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  problemId String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, problemId])
 }

@@ -6,9 +6,18 @@ import { FlashcardFeedback } from '../components/flashcards/FlashcardFeedback'
 import { generateProblem, validateSolution } from '../utils/openai.server'
 import { Button } from '../components/ui/button'
 import Editor from '@monaco-editor/react'
+import { prisma } from '../utils/db.server'
 
 export async function loader() {
+  // Load all problems from the database
+  const problems = await prisma.problem.findMany({
+    orderBy: {
+      difficulty: 'asc'
+    }
+  })
+
   return json({
+    problems,
     currentProblem: null,
   })
 }
@@ -23,30 +32,36 @@ export async function action({ request }: ActionFunctionArgs) {
     
     if (intent === 'start') {
       try {
-        console.log('Generating problem...')
-        const problem = await generateProblem({
-          prompt: "Write a function that finds the maximum number in an array",
-          language: "javascript",
-          difficulty: "beginner"
+        // Get a random problem from the database
+        const problemCount = await prisma.problem.count()
+        const skip = Math.floor(Math.random() * problemCount)
+        const problem = await prisma.problem.findFirst({
+          skip,
+          take: 1
         })
-        console.log('Generated problem:', problem)
-        
-        // Validate the problem structure
-        if (!problem || typeof problem !== 'object') {
-          console.error('Invalid problem format:', problem)
-          return json({ error: 'Invalid problem format' }, { status: 500 })
+
+        if (!problem) {
+          return json({ error: 'No problems found' }, { status: 404 })
+        }
+
+        // Format the problem for the frontend
+        const formattedProblem = {
+          problem: problem.description,
+          startingCode: problem.type === 'FILL_IN' ? problem.template : problem.startingCode,
+          solution: problem.type === 'FILL_IN' ? 
+            JSON.parse(problem.fillInSections || '[]')[0]?.solution : 
+            problem.solution,
+          hints: JSON.parse(problem.hints),
+          type: problem.type,
+          title: problem.title,
+          difficulty: problem.difficulty
         }
         
-        if (!problem.problem || !problem.startingCode || !problem.solution) {
-          console.error('Missing required problem fields:', problem)
-          return json({ error: 'Missing required problem fields' }, { status: 500 })
-        }
-        
-        return json({ problem })
+        return json({ problem: formattedProblem })
       } catch (error) {
-        console.error('Error generating problem:', error)
+        console.error('Error fetching problem:', error)
         return json({ 
-          error: error instanceof Error ? error.message : 'Failed to generate problem'
+          error: error instanceof Error ? error.message : 'Failed to fetch problem'
         }, { status: 500 })
       }
     }
@@ -165,150 +180,223 @@ function PracticeDashboard({ onStart }: { onStart: () => void }) {
 
 function PracticeInterface({ 
   problem, 
-  onSubmit 
+  onSubmit,
+  feedback
 }: { 
   problem: {
     problem: string
     startingCode?: string
     hints?: string[]
+    type: string
+    title: string
+    difficulty: string
   }
-  onSubmit: (code: string) => void 
+  onSubmit: (code: string) => void
+  feedback?: {
+    isCorrect?: boolean
+    message?: string
+  }
 }) {
-  const [code, setCode] = useState('')
-  
+  const [code, setCode] = useState(problem.startingCode || '')
+  const [showHint, setShowHint] = useState(false)
+  const [showConfetti, setShowConfetti] = useState(false)
+
   useEffect(() => {
-    if (problem?.startingCode) {
-      setCode(problem.startingCode)
+    if (feedback?.isCorrect) {
+      setShowConfetti(true)
+      const timer = setTimeout(() => setShowConfetti(false), 3000)
+      return () => clearTimeout(timer)
     }
-  }, [problem])
+  }, [feedback])
 
   return (
-    <div className="h-[calc(100vh-6rem)] flex">
-      {/* Problem Description */}
-      <div className="w-1/2 p-6 border-r overflow-y-auto">
-        <h2 className="text-2xl font-bold mb-4">Problem</h2>
-        <div className="prose dark:prose-invert">
-          <p>{problem.problem}</p>
-          {problem.hints && (
-            <div className="mt-4">
-              <h3 className="text-lg font-semibold">Hints:</h3>
-              <ul>
-                {problem.hints.map((hint: string, index: number) => (
-                  <li key={index}>{hint}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+    <div className="relative min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white">
+      {/* Top Bar with Progress */}
+      <div className="fixed top-0 left-0 right-0 bg-gray-800 border-b border-gray-700 p-4 z-10">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <span className={`px-3 py-1 rounded-full text-sm ${
+              problem.difficulty === 'EASY' ? 'bg-green-500/20 text-green-400' :
+              problem.difficulty === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
+              'bg-red-500/20 text-red-400'
+            }`}>
+              {problem.difficulty}
+            </span>
+            <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full text-sm">
+              {problem.type}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-400">XP: </span>
+            <span className="text-lg font-bold text-yellow-400">100</span>
+          </div>
         </div>
       </div>
 
-      {/* Code Editor */}
-      <div className="w-1/2 flex flex-col">
-        <div className="flex-1">
-          <Editor
-            height="100%"
-            defaultLanguage="javascript"
-            value={code}
-            onChange={(value) => setCode(value || '')}
-            theme="vs-dark"
-            options={{
-              minimap: { enabled: false },
-              fontSize: 14,
-              lineNumbers: 'on',
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-            }}
-          />
-        </div>
-        <div className="p-4 border-t">
-          <Button 
-            onClick={() => onSubmit(code)}
-            className="w-full"
-          >
-            Submit Solution
-          </Button>
+      {/* Main Content */}
+      <div className="pt-20 pb-6 px-6">
+        <div className="max-w-4xl mx-auto">
+          {/* Problem Title and Description */}
+          <div className="bg-gray-800/50 rounded-lg p-6 mb-6 backdrop-blur-sm border border-gray-700">
+            <h2 className="text-2xl font-bold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
+              {problem.title}
+            </h2>
+            <p className="text-gray-300 whitespace-pre-wrap">{problem.problem}</p>
+          </div>
+
+          {/* Hints */}
+          {problem.hints && problem.hints.length > 0 && (
+            <div className="mb-6">
+              <Button
+                variant="outline"
+                onClick={() => setShowHint(!showHint)}
+                className="bg-yellow-500/10 text-yellow-400 border-yellow-500/20 hover:bg-yellow-500/20"
+              >
+                {showHint ? '🎯 Hide Hint' : '💡 Need a Hint?'}
+              </Button>
+              {showHint && (
+                <div className="mt-2 p-4 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
+                  <ul className="list-disc list-inside space-y-2">
+                    {problem.hints.map((hint, index) => (
+                      <li key={index} className="text-yellow-200">{hint}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Code Editor */}
+          <div className="bg-gray-800/50 rounded-lg p-6 backdrop-blur-sm border border-gray-700">
+            <Editor
+              height="300px"
+              defaultLanguage="javascript"
+              theme="vs-dark"
+              value={code}
+              onChange={(value) => setCode(value || '')}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 14,
+                fontFamily: 'JetBrains Mono, monospace',
+                padding: { top: 20 },
+              }}
+              className="rounded-lg overflow-hidden"
+            />
+          </div>
+
+          {/* Feedback */}
+          {feedback && (
+            <div className={`mt-6 p-4 rounded-lg border ${
+              feedback.isCorrect 
+                ? 'bg-green-500/10 border-green-500/20 text-green-400' 
+                : 'bg-red-500/10 border-red-500/20 text-red-400'
+            }`}>
+              <div className="flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                  feedback.isCorrect ? 'bg-green-500/20' : 'bg-red-500/20'
+                }`}>
+                  {feedback.isCorrect ? '✨' : '❌'}
+                </div>
+                <div>
+                  <p className="font-medium">
+                    {feedback.isCorrect ? 'Great job!' : 'Not quite right'}
+                  </p>
+                  {feedback.message && (
+                    <p className="text-sm mt-1 opacity-80">{feedback.message}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Submit Button */}
+          <div className="mt-6">
+            <Button 
+              onClick={() => onSubmit(code)}
+              className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:opacity-90 transition-opacity py-6 text-lg font-bold"
+            >
+              Submit Solution 🚀
+            </Button>
+          </div>
         </div>
       </div>
+
+      {/* Confetti Effect */}
+      {showConfetti && (
+        <div className="fixed inset-0 pointer-events-none">
+          {/* Add confetti animation here */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="animate-confetti">
+              {Array.from({ length: 50 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="absolute w-2 h-2 rounded-full"
+                  style={{
+                    backgroundColor: ['#FFD700', '#FF69B4', '#00CED1', '#98FB98'][i % 4],
+                    left: `${Math.random() * 100}%`,
+                    top: `${Math.random() * 100}%`,
+                    transform: `rotate(${Math.random() * 360}deg)`,
+                    animation: `fall ${1 + Math.random() * 2}s linear forwards`,
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 export default function PracticePage() {
-  const { currentProblem: initialProblem } = useLoaderData<typeof loader>()
-  const [currentProblem, setCurrentProblem] = useState(initialProblem)
+  const { problems } = useLoaderData<typeof loader>()
+  const [currentProblem, setCurrentProblem] = useState<any>(null)
   const [feedback, setFeedback] = useState<any>(null)
   const fetcher = useFetcher()
 
-  // Log fetcher state changes
   useEffect(() => {
-    console.log('Fetcher state:', {
-      state: fetcher.state,
-      data: fetcher.data,
-      formData: fetcher.formData
-    })
-  }, [fetcher.state, fetcher.data])
-
-  // Handle fetcher state
-  useEffect(() => {
-    if (fetcher.state === 'idle' && fetcher.data) {
-      console.log('Received data:', fetcher.data)
-      if (fetcher.data.error) {
-        console.error('Error from server:', fetcher.data.error)
-        return
-      }
-      if (fetcher.data.problem) {
-        console.log('Setting problem:', fetcher.data.problem)
-        setCurrentProblem(fetcher.data.problem)
-        setFeedback(null)
-      } else if (fetcher.data.result) {
-        console.log('Setting feedback:', fetcher.data.result)
-        setFeedback(fetcher.data.result)
-      }
+    if (fetcher.data?.problem) {
+      setCurrentProblem(fetcher.data.problem)
+      setFeedback(null)
     }
-  }, [fetcher.state, fetcher.data])
+    if (fetcher.data?.result) {
+      setFeedback({
+        isCorrect: fetcher.data.result.isCorrect,
+        message: fetcher.data.result.feedback
+      })
+    }
+  }, [fetcher.data])
 
   const handleStart = () => {
-    console.log('Starting practice...')
-    const formData = new FormData()
-    formData.append('intent', 'start')
-    fetcher.submit(formData, { method: 'post' })
+    fetcher.submit(
+      { intent: 'start' },
+      { method: 'post' }
+    )
   }
 
   const handleSubmit = (code: string) => {
-    if (!currentProblem) {
-      console.error('No current problem available')
-      return
-    }
-    console.log('Submitting solution...')
-    const formData = new FormData()
-    formData.append('intent', 'validate')
-    formData.append('code', code)
-    formData.append('solution', currentProblem.solution)
-    formData.append('language', currentProblem.language || 'javascript')
-    fetcher.submit(formData, { method: 'post' })
+    if (!currentProblem?.solution) return
+    
+    fetcher.submit(
+      {
+        intent: 'validate',
+        code,
+        solution: currentProblem.solution,
+        language: 'javascript'
+      },
+      { method: 'post' }
+    )
+  }
+
+  if (!currentProblem) {
+    return <PracticeDashboard onStart={handleStart} />
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white">
-      {!currentProblem ? (
-        <PracticeDashboard onStart={handleStart} />
-      ) : (
-        <div className="container mx-auto px-4 py-8">
-          <PracticeInterface 
-            problem={currentProblem} 
-            onSubmit={handleSubmit}
-          />
-          {feedback && (
-            <div className="fixed bottom-4 right-4 max-w-md">
-              <FlashcardFeedback
-                isCorrect={feedback.isCorrect}
-                message={feedback.feedback}
-                hint={feedback.hint}
-              />
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    <PracticeInterface
+      problem={currentProblem}
+      onSubmit={handleSubmit}
+      feedback={feedback}
+    />
   )
 }

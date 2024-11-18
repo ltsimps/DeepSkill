@@ -10,10 +10,57 @@ import {
 	img,
 } from '#tests/db-utils.ts'
 import { insertGitHubUser } from '#tests/mocks/github.ts'
+import { easyProblems, mediumProblems, hardProblems } from './seed-data'
 
 async function seed() {
 	console.log('🌱 Seeding...')
 	console.time(`🌱 Database has been seeded`)
+
+	// Create roles first
+	console.time('👑 Creating roles...')
+	const roles = [
+		{
+			name: 'admin',
+			permissions: [
+				{ action: 'create', entity: 'problem', access: 'write' },
+				{ action: 'delete', entity: 'problem', access: 'write' },
+			]
+		},
+		{
+			name: 'user',
+			permissions: [
+				{ action: 'solve', entity: 'problem', access: 'write' }
+			]
+		}
+	]
+
+	for (const role of roles) {
+		await prisma.role.create({
+			data: {
+				name: role.name,
+				permissions: {
+					create: role.permissions
+				}
+			}
+		}).catch(e => {
+			console.error('Error creating role:', e)
+			return null
+		})
+	}
+	console.timeEnd('👑 Creating roles...')
+
+	// Create problems
+	console.time('🎯 Creating practice problems...')
+	const problems = [...easyProblems, ...mediumProblems, ...hardProblems]
+	for (const problem of problems) {
+		await prisma.problem.create({
+			data: problem,
+		}).catch(e => {
+			console.error('Error creating problem:', e)
+			return null
+		})
+	}
+	console.timeEnd('🎯 Creating practice problems...')
 
 	const totalUsers = 5
 	console.time(`👤 Created ${totalUsers} users...`)
