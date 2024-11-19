@@ -25,6 +25,7 @@ export const easyProblems = [
     ],
     hints: ['Think about how to add each number to the sum variable'],
     tags: ['arrays', 'loops', 'basic-math'],
+    baseComplexity: 0.5,
   }),
   
   // SCENARIO Problems
@@ -57,6 +58,7 @@ export const easyProblems = [
     ],
     hints: ['Start with the first number as the maximum', 'Compare each number with current maximum'],
     tags: ['arrays', 'loops', 'comparison'],
+    baseComplexity: 0.6,
   }),
   
   // Add more easy problems...
@@ -111,6 +113,7 @@ export const mediumProblems = [
       'When the target is smaller, we need to search the left half'
     ],
     tags: ['binary-search', 'algorithms', 'arrays'],
+    baseComplexity: 1.2,
   }),
   
   // SCENARIO Problems
@@ -170,6 +173,7 @@ q.dequeue();`,
       'Think about when to transfer elements between stacks'
     ],
     tags: ['stacks', 'queues', 'data-structures'],
+    baseComplexity: 1.4,
   }),
   
   // Add more medium problems...
@@ -251,6 +255,7 @@ export const hardProblems = [
     ],
     tags: ['trees', 'red-black-tree', 'balancing'],
     timeLimit: 600,
+    baseComplexity: 1.8,
   }),
   
   // SCENARIO Problems
@@ -361,6 +366,7 @@ findPath(grid, [0, 0], [2, 3]);`,
     ],
     tags: ['pathfinding', 'graphs', 'algorithms'],
     timeLimit: 900,
+    baseComplexity: 2.0,
   }),
   
   // Add more hard problems...

@@ -140,9 +140,19 @@ model Problem {
   title       String
   description String
   source      String   // 'SEEDED' or 'GPT'
-  lastUsed    DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  
+  // Learning metrics
+  baseComplexity    Float    @default(1.0)  // Initial complexity score
+  adaptiveDifficulty Float   @default(1.0)  // Adjusted based on user performance
+  successRate       Float    @default(0.0)  // % of successful attempts
+  averageTime       Float    @default(0.0)  // Average completion time
+  
+  // Usage tracking
+  lastUsed     DateTime?
+  dailyUseCount Int      @default(0)  // Track daily usage
+  totalUses     Int      @default(0)  // Total times problem has been used
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   // Common fields
   hints       String   // Stored as JSON string
@@ -164,11 +174,20 @@ model Problem {
 
 model ProblemProgression {
   id               String   @id @default(cuid())
-  easinessFactor   Float    @default(2.5) // SM-2 E-Factor
-  repetitionNumber Int      @default(0)   // SM-2 n
-  nextReviewDate   DateTime @default(now())
-  lastScore        Float?   // 0-5 scale
-  lastAttempted    DateTime?
+  attempts         Int      @default(0)     // Number of attempts
+  solved           Boolean  @default(false)  // Whether problem was solved
+  lastAttempt      DateTime @default(now()) // Last attempt timestamp
+  
+  // Learning metrics
+  easeFactor       Float    @default(2.5)   // SM-2 inspired learning rate
+  interval         Int      @default(0)     // Days between reviews
+  consecutiveCorrect Int    @default(0)     // Streak of correct solutions
+  timeSpent        Float    @default(0.0)   // Total time spent on problem
+  
+  // RL state
+  stateVector      String?  // JSON string of current state
+  actionValue      Float    @default(0.0)   // Q-value for current state
+  rewardSignal     Float    @default(0.0)   // Last reward received
   
   // Relations
   user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)

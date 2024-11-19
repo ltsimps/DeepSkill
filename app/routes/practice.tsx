@@ -1,4 +1,4 @@
-import { json, type ActionFunctionArgs } from '@remix-run/node'
+import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-run/node'
 import { useLoaderData, useFetcher } from '@remix-run/react'
 import { useState, useEffect, useRef } from 'react'
 import { CodeFlashcard } from '../components/flashcards/CodeFlashcard'
@@ -7,92 +7,150 @@ import { generateProblem, validateSolution } from '../utils/openai.server'
 import { Button } from '../components/ui/button'
 import Editor from '@monaco-editor/react'
 import { prisma } from '../utils/db.server'
+import { practiceScheduler } from '../services/practice.server'
+import { requireUserId } from '../utils/auth.server'
 
-export async function loader() {
-  // Load all problems from the database
-  const problems = await prisma.problem.findMany({
-    orderBy: {
-      difficulty: 'asc'
-    }
+export async function loader({ request }: LoaderFunctionArgs) {
+  // Get user metrics for the dashboard
+  const userId = await requireUserId(request)
+  const metrics = await prisma.problemProgression.findMany({
+    where: { userId },
+    include: { problem: true },
+    orderBy: { lastAttempt: 'desc' },
+    take: 10
   })
 
-  return json({
-    problems,
-    currentProblem: null,
-  })
+  const stats = {
+    totalAttempts: metrics.reduce((acc, m) => acc + m.attempts, 0),
+    problemsSolved: metrics.filter(m => m.solved).length,
+    averageTime: metrics.reduce((acc, m) => acc + m.timeSpent, 0) / metrics.length || 0,
+    streaks: Math.max(...metrics.map(m => m.consecutiveCorrect), 0)
+  }
+
+  return json({ stats })
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  console.log('Action called with method:', request.method)
+  const userId = await requireUserId(request)
+  const formData = await request.formData()
+  const intent = formData.get('intent')
+  const startTime = formData.get('startTime')
   
   try {
-    const formData = await request.formData()
-    const intent = formData.get('intent')
-    console.log('Action intent:', intent)
-    
     if (intent === 'start') {
-      try {
-        // Get a random problem from the database
-        const problemCount = await prisma.problem.count()
-        const skip = Math.floor(Math.random() * problemCount)
-        const problem = await prisma.problem.findFirst({
-          skip,
-          take: 1
-        })
-
-        if (!problem) {
-          return json({ error: 'No problems found' }, { status: 404 })
-        }
-
-        // Format the problem for the frontend
-        const formattedProblem = {
-          problem: problem.description,
-          startingCode: problem.type === 'FILL_IN' ? problem.template : problem.startingCode,
-          solution: problem.type === 'FILL_IN' ? 
-            JSON.parse(problem.fillInSections || '[]')[0]?.solution : 
-            problem.solution,
-          hints: JSON.parse(problem.hints),
-          type: problem.type,
-          title: problem.title,
-          difficulty: problem.difficulty
-        }
-        
-        return json({ problem: formattedProblem })
-      } catch (error) {
-        console.error('Error fetching problem:', error)
+      const result = await practiceScheduler.getNextProblem(userId)
+      
+      if (result.type === 'DAILY_LIMIT_REACHED') {
         return json({ 
-          error: error instanceof Error ? error.message : 'Failed to fetch problem'
-        }, { status: 500 })
+          dailyLimitReached: true,
+          message: "You've reached your daily practice limit. Come back tomorrow!" 
+        })
       }
+      
+      if (result.type === 'NEED_PRESEEDING') {
+        // Generate a new problem using OpenAI
+        const newProblem = await generateProblem(result.difficulty)
+        const problem = await prisma.problem.create({
+          data: {
+            ...newProblem,
+            source: 'GPT',
+            hints: '[]',
+            tags: '[]'
+          }
+        })
+        
+        // Format the problem for the frontend
+        return json({ 
+          problem: {
+            problem: problem.description,
+            startingCode: problem.type === 'FILL_IN' ? problem.template : problem.startingCode,
+            solution: problem.type === 'FILL_IN' ? 
+              JSON.parse(problem.fillInSections || '[]')[0]?.solution : 
+              problem.solution,
+            hints: [],
+            type: problem.type,
+            title: problem.title,
+            difficulty: problem.difficulty,
+            id: problem.id
+          }
+        })
+      }
+      
+      if (result.type === 'PROBLEM_FOUND') {
+        const problem = result.problem
+        return json({ 
+          problem: {
+            problem: problem.description,
+            startingCode: problem.type === 'FILL_IN' ? problem.template : problem.startingCode,
+            solution: problem.type === 'FILL_IN' ? 
+              JSON.parse(problem.fillInSections || '[]')[0]?.solution : 
+              problem.solution,
+            hints: JSON.parse(problem.hints),
+            type: problem.type,
+            title: problem.title,
+            difficulty: problem.difficulty,
+            id: problem.id
+          }
+        })
+      }
+      
+      return json({ error: 'No problems available' }, { status: 404 })
     }
 
     if (intent === 'validate') {
       const userCode = formData.get('code') as string
       const solution = formData.get('solution') as string
       const language = formData.get('language') as string
-
-      console.log('Validating solution:', { language })
-
-      if (!userCode || !solution || !language) {
-        console.error('Missing validation fields:', { userCode, solution, language })
-        return json({ error: 'Missing required fields for validation' }, { status: 400 })
+      const problemId = formData.get('problemId') as string
+      
+      if (!userCode || !solution || !language || !problemId || !startTime) {
+        return json({ error: 'Missing required fields' }, { status: 400 })
       }
 
+      // Calculate time spent
+      const timeSpent = Date.now() - Number(startTime)
+      
       try {
         const result = await validateSolution(userCode, solution, language)
-        console.log('Validation result:', result)
         
         if (!result || typeof result !== 'object') {
-          console.error('Invalid validation result format:', result)
           return json({ error: 'Invalid validation result format' }, { status: 500 })
         }
         
         if (typeof result.isCorrect !== 'boolean' || !result.feedback) {
-          console.error('Missing required validation fields:', result)
           return json({ error: 'Missing required validation fields' }, { status: 500 })
         }
+
+        // Update progression
+        const { progression, xpGained } = await practiceScheduler.updateProgression(
+          userId,
+          problemId,
+          result.isCorrect,
+          timeSpent / 1000 // Convert to seconds
+        )
         
-        return json({ result })
+        // Get the next problem immediately
+        const nextProblem = await practiceScheduler.getNextProblem(userId)
+        
+        return json({ 
+          result,
+          xpGained,
+          nextProblem: nextProblem.type === 'PROBLEM_FOUND' ? {
+            problem: nextProblem.problem.description,
+            startingCode: nextProblem.problem.type === 'FILL_IN' ? 
+              nextProblem.problem.template : 
+              nextProblem.problem.startingCode,
+            solution: nextProblem.problem.type === 'FILL_IN' ? 
+              JSON.parse(nextProblem.problem.fillInSections || '[]')[0]?.solution : 
+              nextProblem.problem.solution,
+            hints: JSON.parse(nextProblem.problem.hints),
+            type: nextProblem.problem.type,
+            title: nextProblem.problem.title,
+            difficulty: nextProblem.problem.difficulty,
+            id: nextProblem.problem.id
+          } : null,
+          dailyLimitReached: nextProblem.type === 'DAILY_LIMIT_REACHED'
+        })
       } catch (error) {
         console.error('Error validating solution:', error)
         return json({ 
@@ -101,7 +159,6 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    console.error('Invalid intent:', intent)
     return json({ error: 'Invalid intent' }, { status: 400 })
   } catch (error) {
     console.error('Action error:', error)
@@ -190,6 +247,7 @@ function PracticeInterface({
     type: string
     title: string
     difficulty: string
+    id: string
   }
   onSubmit: (code: string) => void
   feedback?: {
@@ -349,10 +407,12 @@ function PracticeInterface({
 }
 
 export default function PracticePage() {
-  const { problems } = useLoaderData<typeof loader>()
+  const { stats } = useLoaderData<typeof loader>()
   const [currentProblem, setCurrentProblem] = useState<any>(null)
   const [feedback, setFeedback] = useState<any>(null)
+  const [xpAnimation, setXpAnimation] = useState<{ amount: number, isVisible: boolean }>({ amount: 0, isVisible: false })
   const fetcher = useFetcher()
+  const transitionTimeoutRef = useRef<NodeJS.Timeout>()
 
   useEffect(() => {
     if (fetcher.data?.problem) {
@@ -364,6 +424,31 @@ export default function PracticePage() {
         isCorrect: fetcher.data.result.isCorrect,
         message: fetcher.data.result.feedback
       })
+      
+      // Show XP animation
+      if (fetcher.data.xpGained) {
+        setXpAnimation({ amount: fetcher.data.xpGained, isVisible: true })
+        setTimeout(() => setXpAnimation(prev => ({ ...prev, isVisible: false })), 2000)
+      }
+      
+      // Automatic transition after 3 seconds
+      if (fetcher.data.nextProblem) {
+        transitionTimeoutRef.current = setTimeout(() => {
+          setCurrentProblem(fetcher.data.nextProblem)
+          setFeedback(null)
+        }, 3000)
+      } else if (fetcher.data.dailyLimitReached) {
+        transitionTimeoutRef.current = setTimeout(() => {
+          setCurrentProblem(null)
+          setFeedback(null)
+        }, 3000)
+      }
+    }
+    
+    return () => {
+      if (transitionTimeoutRef.current) {
+        clearTimeout(transitionTimeoutRef.current)
+      }
     }
   }, [fetcher.data])
 
@@ -382,7 +467,9 @@ export default function PracticePage() {
         intent: 'validate',
         code,
         solution: currentProblem.solution,
-        language: 'javascript'
+        language: 'javascript',
+        problemId: currentProblem.id,
+        startTime: Date.now()
       },
       { method: 'post' }
     )
@@ -393,10 +480,17 @@ export default function PracticePage() {
   }
 
   return (
-    <PracticeInterface
-      problem={currentProblem}
-      onSubmit={handleSubmit}
-      feedback={feedback}
-    />
+    <div>
+      <PracticeInterface
+        problem={currentProblem}
+        onSubmit={handleSubmit}
+        feedback={feedback}
+      />
+      {xpAnimation.isVisible && (
+        <div className="fixed top-4 right-4 animate-bounce bg-green-500 text-white px-4 py-2 rounded-full shadow-lg">
+          +{xpAnimation.amount} XP
+        </div>
+      )}
+    </div>
   )
 }

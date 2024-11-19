@@ -23,6 +23,7 @@ export function createFillInProblem({
   hints = [],
   tags = [],
   timeLimit = 300,
+  baseComplexity = 1.0,
 }: {
   title: string
   difficulty: 'EASY' | 'MEDIUM' | 'HARD'
@@ -32,6 +33,7 @@ export function createFillInProblem({
   hints?: string[]
   tags?: string[]
   timeLimit?: number
+  baseComplexity?: number
 }): Prisma.ProblemCreateInput {
   return {
     type: 'FILL_IN',
@@ -48,6 +50,12 @@ export function createFillInProblem({
     startingCode: null,
     solution: null,
     source: 'SEEDED',
+    baseComplexity,
+    adaptiveDifficulty: 1.0,
+    successRate: 0.0,
+    averageTime: 0.0,
+    dailyUseCount: 0,
+    totalUses: 0
   }
 }
 
@@ -62,6 +70,7 @@ export function createScenarioProblem({
   hints = [],
   tags = [],
   timeLimit = 300,
+  baseComplexity = 1.0,
 }: {
   title: string
   difficulty: 'EASY' | 'MEDIUM' | 'HARD'
@@ -72,21 +81,28 @@ export function createScenarioProblem({
   hints?: string[]
   tags?: string[]
   timeLimit?: number
+  baseComplexity?: number
 }): Prisma.ProblemCreateInput {
   return {
     type: 'SCENARIO',
     difficulty,
-    language: 'JAVASCRIPT', // Default to JavaScript for now
+    language: 'JAVASCRIPT',
     title,
     description,
     hints: JSON.stringify(hints),
     tags: JSON.stringify(tags),
     timeLimit,
+    template: null,
+    fillInSections: null,
     startingCode,
     solution,
     testCases: JSON.stringify(testCases),
-    template: null,
-    fillInSections: null,
     source: 'SEEDED',
+    baseComplexity,
+    adaptiveDifficulty: 1.0,
+    successRate: 0.0,
+    averageTime: 0.0,
+    dailyUseCount: 0,
+    totalUses: 0
   }
 }
