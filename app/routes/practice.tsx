@@ -1,84 +1,92 @@
-import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-run/node'
-import { useLoaderData, useFetcher } from '@remix-run/react'
-import { useState, useEffect, useRef } from 'react'
-import { CodeFlashcard } from '../components/flashcards/CodeFlashcard'
-import { FlashcardFeedback } from '../components/flashcards/FlashcardFeedback'
-import { generateProblem, validateSolution } from '../utils/openai.server'
-import { Button } from '../components/ui/button'
-import Editor from '@monaco-editor/react'
-import { prisma } from '../utils/db.server'
-import { practiceScheduler } from '../services/practice.server'
-import { requireUserId } from '../utils/auth.server'
+import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-run/node';
+import { useLoaderData, useFetcher } from '@remix-run/react';
+import { useState, useEffect, useRef } from 'react';
+import { practiceScheduler } from '../services/practice.server';
+import { requireUserId } from '../utils/auth.server';
+import { prisma } from '../utils/db.server';
+import { generateProblem, validateSolution } from '../utils/openai.server';
+import { PracticeInterface } from '../components/practice/PracticeInterface';
+import { PracticeDashboard } from '../components/practice/PracticeDashboard';
+import type { 
+  GeneratedProblem, 
+  LoaderData, 
+  ProblemProgression,
+  FetcherData,
+  ProblemFeedback 
+} from '../types/practice';
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  // Get user metrics for the dashboard
-  const userId = await requireUserId(request)
+  const userId = await requireUserId(request);
   const metrics = await prisma.problemProgression.findMany({
     where: { userId },
     include: { problem: true },
     orderBy: { lastAttempt: 'desc' },
     take: 10
-  })
+  }) as ProblemProgression[];
 
   const stats = {
     totalAttempts: metrics.reduce((acc, m) => acc + m.attempts, 0),
     problemsSolved: metrics.filter(m => m.solved).length,
     averageTime: metrics.reduce((acc, m) => acc + m.timeSpent, 0) / metrics.length || 0,
     streaks: Math.max(...metrics.map(m => m.consecutiveCorrect), 0)
-  }
+  };
 
-  return json({ stats })
+  return json<LoaderData>({ stats });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const userId = await requireUserId(request)
-  const formData = await request.formData()
-  const intent = formData.get('intent')
-  const startTime = formData.get('startTime')
+  const userId = await requireUserId(request);
+  const formData = await request.formData();
+  const intent = formData.get('intent') as string;
+  const startTime = formData.get('startTime') as string;
+  const language = formData.get('language') as string | null;
   
   try {
     if (intent === 'start') {
-      const result = await practiceScheduler.getNextProblem(userId)
+      const result = await practiceScheduler.getNextProblem(userId, language);
       
       if (result.type === 'DAILY_LIMIT_REACHED') {
-        return json({ 
+        return json<FetcherData>({ 
           dailyLimitReached: true,
           message: "You've reached your daily practice limit. Come back tomorrow!" 
-        })
+        });
       }
       
       if (result.type === 'NEED_PRESEEDING') {
-        // Generate a new problem using OpenAI
-        const newProblem = await generateProblem(result.difficulty)
+        const newProblem = await generateProblem({
+          difficulty: result.difficulty === 'EASY' ? 'beginner' : 
+                     result.difficulty === 'MEDIUM' ? 'intermediate' : 
+                     'advanced',
+          language: language || 'javascript',
+          prompt: 'Generate a coding problem'
+        });
+
         const problem = await prisma.problem.create({
           data: {
-            ...newProblem,
+            description: newProblem.problem,
+            startingCode: newProblem.startingCode || '',
+            solution: newProblem.solution,
             source: 'GPT',
-            hints: '[]',
-            tags: '[]'
+            hints: JSON.stringify(newProblem.hints || []),
+            tags: JSON.stringify(newProblem.testCases || []),
+            type: newProblem.type || 'FILL_IN',
+            difficulty: newProblem.difficulty || 'BEGINNER',
+            language: newProblem.language || 'javascript',
+            title: `Generated Problem - ${new Date().toLocaleString()}`
           }
-        })
+        });
         
-        // Format the problem for the frontend
-        return json({ 
+        return json<FetcherData>({ 
           problem: {
-            problem: problem.description,
-            startingCode: problem.type === 'FILL_IN' ? problem.template : problem.startingCode,
-            solution: problem.type === 'FILL_IN' ? 
-              JSON.parse(problem.fillInSections || '[]')[0]?.solution : 
-              problem.solution,
-            hints: [],
-            type: problem.type,
-            title: problem.title,
-            difficulty: problem.difficulty,
+            ...newProblem,
             id: problem.id
           }
-        })
+        });
       }
       
       if (result.type === 'PROBLEM_FOUND') {
-        const problem = result.problem
-        return json({ 
+        const problem = result.problem;
+        return json<FetcherData>({ 
           problem: {
             problem: problem.description,
             startingCode: problem.type === 'FILL_IN' ? problem.template : problem.startingCode,
@@ -89,50 +97,47 @@ export async function action({ request }: ActionFunctionArgs) {
             type: problem.type,
             title: problem.title,
             difficulty: problem.difficulty,
-            id: problem.id
+            id: problem.id,
+            language: problem.language
           }
-        })
+        });
       }
       
-      return json({ error: 'No problems available' }, { status: 404 })
+      return json<FetcherData>({ error: 'No problems available' }, { status: 404 });
     }
 
     if (intent === 'validate') {
-      const userCode = formData.get('code') as string
-      const solution = formData.get('solution') as string
-      const language = formData.get('language') as string
-      const problemId = formData.get('problemId') as string
+      const userCode = formData.get('code') as string;
+      const solution = formData.get('solution') as string;
+      const problemId = formData.get('problemId') as string;
       
-      if (!userCode || !solution || !language || !problemId || !startTime) {
-        return json({ error: 'Missing required fields' }, { status: 400 })
+      if (!userCode || !solution || !problemId || !startTime) {
+        return json<FetcherData>({ error: 'Missing required fields' }, { status: 400 });
       }
 
-      // Calculate time spent
-      const timeSpent = Date.now() - Number(startTime)
+      const timeSpent = Date.now() - Number(startTime);
       
       try {
-        const result = await validateSolution(userCode, solution, language)
+        const result = await validateSolution(userCode, solution, language);
         
         if (!result || typeof result !== 'object') {
-          return json({ error: 'Invalid validation result format' }, { status: 500 })
+          return json<FetcherData>({ error: 'Invalid validation result format' }, { status: 500 });
         }
         
         if (typeof result.isCorrect !== 'boolean' || !result.feedback) {
-          return json({ error: 'Missing required validation fields' }, { status: 500 })
+          return json<FetcherData>({ error: 'Missing required validation fields' }, { status: 500 });
         }
 
-        // Update progression
         const { progression, xpGained } = await practiceScheduler.updateProgression(
           userId,
           problemId,
           result.isCorrect,
-          timeSpent / 1000 // Convert to seconds
-        )
+          timeSpent / 1000
+        );
         
-        // Get the next problem immediately
-        const nextProblem = await practiceScheduler.getNextProblem(userId)
+        const nextProblem = await practiceScheduler.getNextProblem(userId, language);
         
-        return json({ 
+        return json<FetcherData>({ 
           result,
           xpGained,
           nextProblem: nextProblem.type === 'PROBLEM_FOUND' ? {
@@ -147,336 +152,119 @@ export async function action({ request }: ActionFunctionArgs) {
             type: nextProblem.problem.type,
             title: nextProblem.problem.title,
             difficulty: nextProblem.problem.difficulty,
-            id: nextProblem.problem.id
+            id: nextProblem.problem.id,
+            language: nextProblem.problem.language
           } : null,
           dailyLimitReached: nextProblem.type === 'DAILY_LIMIT_REACHED'
-        })
+        });
       } catch (error) {
-        console.error('Error validating solution:', error)
-        return json({ 
+        console.error('Error validating solution:', error);
+        return json<FetcherData>({ 
           error: error instanceof Error ? error.message : 'Failed to validate solution'
-        }, { status: 500 })
+        }, { status: 500 });
       }
     }
 
-    return json({ error: 'Invalid intent' }, { status: 400 })
+    return json<FetcherData>({ error: 'Invalid intent' }, { status: 400 });
   } catch (error) {
-    console.error('Action error:', error)
-    return json({ 
+    console.error('Action error:', error);
+    return json<FetcherData>({ 
       error: error instanceof Error ? error.message : 'Internal server error'
-    }, { status: 500 })
+    }, { status: 500 });
   }
-}
-
-function IntroAnimation() {
-  const [mounted, setMounted] = useState(false)
-  
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
-  if (!mounted) {
-    return <div className="relative w-96 h-96 mb-8" />
-  }
-
-  return (
-    <div className="relative w-96 h-96 mb-8">
-      {/* Nebula core */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div className="w-64 h-64 rounded-full bg-gradient-to-r from-purple-600 via-pink-500 to-blue-500 opacity-75 blur-xl animate-pulse" />
-        <div className="absolute w-48 h-48 rounded-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 opacity-60 blur-lg animate-pulse-slow" />
-      </div>
-      
-      {/* Orbiting elements */}
-      <div className="absolute inset-0">
-        <div className="absolute w-8 h-8 rounded-full bg-blue-400 blur-sm animate-orbit" 
-             style={{top: '50%', left: '50%', transform: 'translate(-50%, -50%) rotate(0deg) translateX(150px)'}} />
-        <div className="absolute w-6 h-6 rounded-full bg-purple-400 blur-sm animate-orbit-reverse"
-             style={{top: '50%', left: '50%', transform: 'translate(-50%, -50%) rotate(120deg) translateX(120px)'}} />
-        <div className="absolute w-4 h-4 rounded-full bg-pink-400 blur-sm animate-orbit-slow"
-             style={{top: '50%', left: '50%', transform: 'translate(-50%, -50%) rotate(240deg) translateX(100px)'}} />
-      </div>
-
-      {/* Static stars instead of random positions */}
-      <div className="absolute inset-0">
-        {Array.from({ length: 20 }).map((_, i) => {
-          const top = `${(i * 17) % 100}%`
-          const left = `${(i * 23) % 100}%`
-          const delay = `${(i * 0.3) % 2}s`
-          return (
-            <div
-              key={i}
-              className="absolute w-1 h-1 bg-white rounded-full animate-twinkle"
-              style={{
-                top,
-                left,
-                animationDelay: delay
-              }}
-            />
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function PracticeDashboard({ onStart }: { onStart: () => void }) {
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen">
-      <IntroAnimation />
-      <Button
-        onClick={onStart}
-        size="lg"
-        className="bg-gradient-to-r from-blue-500 to-purple-500 text-white px-8 py-4 text-lg hover:opacity-90 transition-opacity mt-8"
-      >
-        Begin Practice
-      </Button>
-    </div>
-  )
-}
-
-function PracticeInterface({ 
-  problem, 
-  onSubmit,
-  feedback
-}: { 
-  problem: {
-    problem: string
-    startingCode?: string
-    hints?: string[]
-    type: string
-    title: string
-    difficulty: string
-    id: string
-  }
-  onSubmit: (code: string) => void
-  feedback?: {
-    isCorrect?: boolean
-    message?: string
-  }
-}) {
-  const [code, setCode] = useState(problem.startingCode || '')
-  const [showHint, setShowHint] = useState(false)
-  const [showConfetti, setShowConfetti] = useState(false)
-
-  useEffect(() => {
-    if (feedback?.isCorrect) {
-      setShowConfetti(true)
-      const timer = setTimeout(() => setShowConfetti(false), 3000)
-      return () => clearTimeout(timer)
-    }
-  }, [feedback])
-
-  return (
-    <div className="relative min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white">
-      {/* Top Bar with Progress */}
-      <div className="fixed top-0 left-0 right-0 bg-gray-800 border-b border-gray-700 p-4 z-10">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <span className={`px-3 py-1 rounded-full text-sm ${
-              problem.difficulty === 'EASY' ? 'bg-green-500/20 text-green-400' :
-              problem.difficulty === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
-              'bg-red-500/20 text-red-400'
-            }`}>
-              {problem.difficulty}
-            </span>
-            <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full text-sm">
-              {problem.type}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-400">XP: </span>
-            <span className="text-lg font-bold text-yellow-400">100</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="pt-20 pb-6 px-6">
-        <div className="max-w-4xl mx-auto">
-          {/* Problem Title and Description */}
-          <div className="bg-gray-800/50 rounded-lg p-6 mb-6 backdrop-blur-sm border border-gray-700">
-            <h2 className="text-2xl font-bold mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
-              {problem.title}
-            </h2>
-            <p className="text-gray-300 whitespace-pre-wrap">{problem.problem}</p>
-          </div>
-
-          {/* Hints */}
-          {problem.hints && problem.hints.length > 0 && (
-            <div className="mb-6">
-              <Button
-                variant="outline"
-                onClick={() => setShowHint(!showHint)}
-                className="bg-yellow-500/10 text-yellow-400 border-yellow-500/20 hover:bg-yellow-500/20"
-              >
-                {showHint ? '🎯 Hide Hint' : '💡 Need a Hint?'}
-              </Button>
-              {showHint && (
-                <div className="mt-2 p-4 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
-                  <ul className="list-disc list-inside space-y-2">
-                    {problem.hints.map((hint, index) => (
-                      <li key={index} className="text-yellow-200">{hint}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Code Editor */}
-          <div className="bg-gray-800/50 rounded-lg p-6 backdrop-blur-sm border border-gray-700">
-            <Editor
-              height="300px"
-              defaultLanguage="javascript"
-              theme="vs-dark"
-              value={code}
-              onChange={(value) => setCode(value || '')}
-              options={{
-                minimap: { enabled: false },
-                fontSize: 14,
-                fontFamily: 'JetBrains Mono, monospace',
-                padding: { top: 20 },
-              }}
-              className="rounded-lg overflow-hidden"
-            />
-          </div>
-
-          {/* Feedback */}
-          {feedback && (
-            <div className={`mt-6 p-4 rounded-lg border ${
-              feedback.isCorrect 
-                ? 'bg-green-500/10 border-green-500/20 text-green-400' 
-                : 'bg-red-500/10 border-red-500/20 text-red-400'
-            }`}>
-              <div className="flex items-center gap-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                  feedback.isCorrect ? 'bg-green-500/20' : 'bg-red-500/20'
-                }`}>
-                  {feedback.isCorrect ? '✨' : '❌'}
-                </div>
-                <div>
-                  <p className="font-medium">
-                    {feedback.isCorrect ? 'Great job!' : 'Not quite right'}
-                  </p>
-                  {feedback.message && (
-                    <p className="text-sm mt-1 opacity-80">{feedback.message}</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Submit Button */}
-          <div className="mt-6">
-            <Button 
-              onClick={() => onSubmit(code)}
-              className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:opacity-90 transition-opacity py-6 text-lg font-bold"
-            >
-              Submit Solution 🚀
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Confetti Effect */}
-      {showConfetti && (
-        <div className="fixed inset-0 pointer-events-none">
-          {/* Add confetti animation here */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="animate-confetti">
-              {Array.from({ length: 50 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="absolute w-2 h-2 rounded-full"
-                  style={{
-                    backgroundColor: ['#FFD700', '#FF69B4', '#00CED1', '#98FB98'][i % 4],
-                    left: `${Math.random() * 100}%`,
-                    top: `${Math.random() * 100}%`,
-                    transform: `rotate(${Math.random() * 360}deg)`,
-                    animation: `fall ${1 + Math.random() * 2}s linear forwards`,
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
 }
 
 export default function PracticePage() {
-  const { stats } = useLoaderData<typeof loader>()
-  const [currentProblem, setCurrentProblem] = useState<any>(null)
-  const [feedback, setFeedback] = useState<any>(null)
-  const [xpAnimation, setXpAnimation] = useState<{ amount: number, isVisible: boolean }>({ amount: 0, isVisible: false })
-  const fetcher = useFetcher()
-  const transitionTimeoutRef = useRef<NodeJS.Timeout>()
-
-  useEffect(() => {
-    if (fetcher.data?.problem) {
-      setCurrentProblem(fetcher.data.problem)
-      setFeedback(null)
-    }
-    if (fetcher.data?.result) {
-      setFeedback({
-        isCorrect: fetcher.data.result.isCorrect,
-        message: fetcher.data.result.feedback
-      })
-      
-      // Show XP animation
-      if (fetcher.data.xpGained) {
-        setXpAnimation({ amount: fetcher.data.xpGained, isVisible: true })
-        setTimeout(() => setXpAnimation(prev => ({ ...prev, isVisible: false })), 2000)
-      }
-      
-      // Automatic transition after 3 seconds
-      if (fetcher.data.nextProblem) {
-        transitionTimeoutRef.current = setTimeout(() => {
-          setCurrentProblem(fetcher.data.nextProblem)
-          setFeedback(null)
-        }, 3000)
-      } else if (fetcher.data.dailyLimitReached) {
-        transitionTimeoutRef.current = setTimeout(() => {
-          setCurrentProblem(null)
-          setFeedback(null)
-        }, 3000)
-      }
-    }
-    
-    return () => {
-      if (transitionTimeoutRef.current) {
-        clearTimeout(transitionTimeoutRef.current)
-      }
-    }
-  }, [fetcher.data])
+  const { stats } = useLoaderData<typeof loader>();
+  const [currentProblem, setCurrentProblem] = useState<GeneratedProblem | null>(null);
+  const [feedback, setFeedback] = useState<ProblemFeedback | null>(null);
+  const [xpAnimation, setXpAnimation] = useState<{ amount: number; isVisible: boolean }>({ amount: 0, isVisible: false });
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('javascript');
+  const fetcher = useFetcher<FetcherData>();
+  const transitionTimeoutRef = useRef<NodeJS.Timeout>();
 
   const handleStart = () => {
     fetcher.submit(
-      { intent: 'start' },
+      { intent: 'start', language: selectedLanguage },
       { method: 'post' }
-    )
-  }
+    );
+  };
+
+  const handleLanguageChange = (language: string) => {
+    setSelectedLanguage(language);
+  };
 
   const handleSubmit = (code: string) => {
-    if (!currentProblem?.solution) return
+    if (!currentProblem?.solution) return;
     
     fetcher.submit(
       {
         intent: 'validate',
         code,
         solution: currentProblem.solution,
-        language: 'javascript',
+        language: selectedLanguage,
         problemId: currentProblem.id,
-        startTime: Date.now()
+        startTime: Date.now().toString()
       },
       { method: 'post' }
-    )
+    );
+  };
+
+  useEffect(() => {
+    if (fetcher.data?.problem) {
+      setCurrentProblem(fetcher.data.problem);
+      setFeedback(null);
+    }
+    if (fetcher.data?.result) {
+      setFeedback({
+        isCorrect: fetcher.data.result.isCorrect,
+        message: fetcher.data.result.feedback
+      });
+      
+      if (fetcher.data.xpGained) {
+        setXpAnimation({ amount: fetcher.data.xpGained, isVisible: true });
+        const timer = setTimeout(() => setXpAnimation(prev => ({ ...prev, isVisible: false })), 2000);
+        return () => clearTimeout(timer);
+      }
+      
+      if (fetcher.data.nextProblem) {
+        transitionTimeoutRef.current = setTimeout(() => {
+          setCurrentProblem(fetcher.data.nextProblem);
+          setFeedback(null);
+        }, 3000);
+      } else if (fetcher.data.dailyLimitReached) {
+        transitionTimeoutRef.current = setTimeout(() => {
+          setCurrentProblem(null);
+          setFeedback(null);
+        }, 3000);
+      }
+    }
+    
+    return () => {
+      if (transitionTimeoutRef.current) {
+        clearTimeout(transitionTimeoutRef.current);
+      }
+    };
+  }, [fetcher.data]);
+
+  // Handle client-side hydration
+  const [isClient, setIsClient] = useState(false);
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  if (!isClient) {
+    return null; // Return null on server-side to prevent hydration mismatch
   }
 
   if (!currentProblem) {
-    return <PracticeDashboard onStart={handleStart} />
+    return (
+      <PracticeDashboard 
+        onStart={handleStart} 
+        onLanguageChange={handleLanguageChange}
+        selectedLanguage={selectedLanguage}
+      />
+    );
   }
 
   return (
@@ -492,5 +280,5 @@ export default function PracticePage() {
         </div>
       )}
     </div>
-  )
+  );
 }

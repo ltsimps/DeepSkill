@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import { z } from 'zod'
+import { GeneratedProblem } from '../routes/practice'
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -14,7 +15,7 @@ const CodePromptSchema = z.object({
 
 export type CodePrompt = z.infer<typeof CodePromptSchema>
 
-export async function generateProblem(prompt: CodePrompt) {
+export async function generateProblem(prompt: CodePrompt): Promise<GeneratedProblem> {
   console.log('Generating problem with prompt:', prompt)
   
   try {
@@ -26,6 +27,9 @@ export async function generateProblem(prompt: CodePrompt) {
           content: `You are a coding instructor creating practice problems. Generate a coding problem based on the following prompt. 
           Your response must be a valid JSON object with this exact structure:
           {
+            "title": "problem title",
+            "difficulty": "${prompt.difficulty}",
+            "language": "${prompt.language}",
             "problem": "detailed problem description",
             "startingCode": "initial code template with missing parts",
             "solution": "complete solution",
@@ -49,10 +53,10 @@ export async function generateProblem(prompt: CodePrompt) {
     
     console.log('OpenAI response:', response)
     try {
-      const parsedResponse = JSON.parse(response)
+      const parsedResponse: GeneratedProblem = JSON.parse(response)
       
       // Validate the response has the required fields
-      if (!parsedResponse.problem || !parsedResponse.startingCode || !parsedResponse.solution) {
+      if (!parsedResponse.title || !parsedResponse.difficulty || !parsedResponse.language || !parsedResponse.problem || !parsedResponse.startingCode || !parsedResponse.solution) {
         throw new Error('Invalid response format from OpenAI')
       }
       
