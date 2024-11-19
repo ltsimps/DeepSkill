@@ -57,6 +57,16 @@ export default {
           '0%, 100%': { opacity: '0.8', transform: 'scale(1.1)' },
           '50%': { opacity: '0.4', transform: 'scale(0.95)' },
         },
+        gradient: {
+          '0%': { backgroundPosition: '0% 50%' },
+          '50%': { backgroundPosition: '100% 50%' },
+          '100%': { backgroundPosition: '0% 50%' },
+        },
+        'pulse-subtle': {
+          '0%': { transform: 'scale(1)' },
+          '50%': { transform: 'scale(1.02)' },
+          '100%': { transform: 'scale(1)' },
+        },
       },
       animation: {
         'spin-slow': 'spin 3s linear infinite',
@@ -73,6 +83,8 @@ export default {
         'orbit-slow': 'orbit-slow 15s linear infinite',
         pulse: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'pulse-slow': 'pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        gradient: 'gradient 15s ease infinite',
+        'pulse-subtle': 'pulse-subtle 2s ease-in-out infinite',
       },
     },
   },
