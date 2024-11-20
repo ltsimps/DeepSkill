@@ -12,7 +12,9 @@ interface ProblemMetrics {
 
 export class PracticeScheduler {
   // Get the next problem for a user based on their performance
-  async getNextProblem(userId: string) {
+  async getNextProblem(userId: string, language?: string | null) {
+    console.log('Getting next problem for user:', userId, 'language:', language);
+    
     // Check if user has reached daily limit
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -26,7 +28,10 @@ export class PracticeScheduler {
       }
     })
 
+    console.log('Attempts today:', attemptedToday);
+
     if (attemptedToday >= DAILY_PROBLEM_LIMIT) {
+      console.log('Daily limit reached');
       return { type: 'DAILY_LIMIT_REACHED' as const }
     }
 
@@ -35,12 +40,30 @@ export class PracticeScheduler {
     
     // Select appropriate difficulty level
     const targetDifficulty = this.selectDifficulty(userMetrics)
+    console.log('Selected difficulty:', targetDifficulty);
     
     // First try to get a preseeded problem
+    console.log('Searching for preseeded problem...');
+    
+    // Check total problems in database
+    const totalProblems = await prisma.problem.count({
+      where: {
+        language: language || 'javascript'
+      }
+    });
+    console.log('Total problems in database for language', language || 'javascript', ':', totalProblems);
+    
+    // If no problems exist at all for this language, we need to generate one
+    if (totalProblems === 0) {
+      console.log('No problems found for language', language || 'javascript', ', need to generate');
+      return { type: 'NEED_PRESEEDING' as const, difficulty: targetDifficulty, language: language || 'javascript' }
+    }
+    
     const problem = await prisma.problem.findFirst({
       where: {
         difficulty: targetDifficulty,
         source: 'SEEDED',
+        language: language || 'javascript',
         dailyUseCount: { lt: 3 }, // Limit daily uses per problem
         NOT: {
           progressions: {
@@ -57,6 +80,7 @@ export class PracticeScheduler {
     })
 
     if (problem) {
+      console.log('Found preseeded problem:', problem.id);
       // Update usage metrics
       await prisma.problem.update({
         where: { id: problem.id },
@@ -70,22 +94,29 @@ export class PracticeScheduler {
       return { type: 'PROBLEM_FOUND' as const, problem }
     }
 
+    console.log('No preseeded problem found, checking counts...');
+    
     // If no preseeded problem found, check if we need to generate more
     const preseededCount = await prisma.problem.count({
       where: {
         difficulty: targetDifficulty,
-        source: 'SEEDED'
+        source: 'SEEDED',
+        language: language || 'javascript'
       }
     })
 
+    console.log('Preseeded problems for difficulty', targetDifficulty, ':', preseededCount);
+
     if (preseededCount < MIN_PRESEEDED_PER_DIFFICULTY) {
-      return { type: 'NEED_PRESEEDING' as const, difficulty: targetDifficulty }
+      console.log('Need more preseeded problems');
+      return { type: 'NEED_PRESEEDING' as const, difficulty: targetDifficulty, language: language || 'javascript' }
     }
 
     // As a fallback, get any available problem
     const fallbackProblem = await prisma.problem.findFirst({
       where: {
         difficulty: targetDifficulty,
+        language: language || 'javascript',
         NOT: {
           progressions: {
             some: {
@@ -113,7 +144,9 @@ export class PracticeScheduler {
       return { type: 'PROBLEM_FOUND' as const, problem: fallbackProblem }
     }
 
-    return { type: 'NO_PROBLEMS_AVAILABLE' as const }
+    // If we get here, we need to generate a new problem
+    console.log('No problems available, need to generate new one');
+    return { type: 'NEED_PRESEEDING' as const, difficulty: targetDifficulty, language: language || 'javascript' }
   }
 
   // Update problem and user metrics after an attempt

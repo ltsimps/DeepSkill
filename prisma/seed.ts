@@ -54,7 +54,16 @@ async function seed() {
 	const problems = [...easyProblems, ...mediumProblems, ...hardProblems]
 	for (const problem of problems) {
 		await prisma.problem.create({
-			data: problem,
+			data: {
+				...problem,
+				source: 'SEEDED',  // Explicitly set the source
+				dailyUseCount: 0,  // Initialize usage metrics
+				totalUses: 0,
+				lastUsed: new Date(),
+				successRate: 0,
+				averageTime: 0,
+				adaptiveDifficulty: 1.0
+			},
 		}).catch(e => {
 			console.error('Error creating problem:', e)
 			return null

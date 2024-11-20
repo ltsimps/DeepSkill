@@ -6,20 +6,11 @@ import type { PracticeInterfaceProps } from '../../types/practice';
 export function PracticeInterface({ problem, onSubmit, feedback }: PracticeInterfaceProps) {
   const [code, setCode] = useState(problem.startingCode || '');
   const [showHint, setShowHint] = useState(false);
-  const [showConfetti, setShowConfetti] = useState(false);
   const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
     setIsClient(true);
   }, []);
-
-  useEffect(() => {
-    if (feedback?.isCorrect) {
-      setShowConfetti(true);
-      const timer = setTimeout(() => setShowConfetti(false), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [feedback]);
 
   if (!isClient) {
     return <div>Loading...</div>; // Show a loading state during server-side rendering
@@ -82,7 +73,7 @@ export function PracticeInterface({ problem, onSubmit, feedback }: PracticeInter
           <div className="bg-gray-800/50 rounded-lg p-6 backdrop-blur-sm border border-gray-700">
             <Editor
               height="300px"
-              defaultLanguage="javascript"
+              defaultLanguage={problem.language || 'javascript'}
               theme="vs-dark"
               value={code}
               onChange={(value) => setCode(value || '')}
@@ -96,65 +87,24 @@ export function PracticeInterface({ problem, onSubmit, feedback }: PracticeInter
             />
           </div>
 
-          {/* Feedback */}
-          {feedback && (
-            <div className={`mt-6 p-4 rounded-lg border ${
-              feedback.isCorrect 
-                ? 'bg-green-500/10 border-green-500/20 text-green-400' 
-                : 'bg-red-500/10 border-red-500/20 text-red-400'
-            }`}>
-              <div className="flex items-center gap-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                  feedback.isCorrect ? 'bg-green-500/20' : 'bg-red-500/20'
-                }`}>
-                  {feedback.isCorrect ? '✨' : '❌'}
-                </div>
-                <div>
-                  <p className="font-medium">
-                    {feedback.isCorrect ? 'Great job!' : 'Not quite right'}
-                  </p>
-                  {feedback.message && (
-                    <p className="text-sm mt-1 opacity-80">{feedback.message}</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Submit Button */}
-          <div className="mt-6">
-            <Button 
+          {/* Action Buttons */}
+          <div className="mt-6 flex gap-4">
+            <Button
               onClick={() => onSubmit(code)}
-              className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:opacity-90 transition-opacity py-6 text-lg font-bold"
+              className="bg-green-500 hover:bg-green-600 text-white px-8"
             >
-              Submit Solution 🚀
+              Submit Solution
+            </Button>
+            <Button
+              onClick={() => onSubmit('SKIP')}
+              variant="outline"
+              className="bg-gray-700/50 hover:bg-gray-700 text-gray-300 border-gray-600"
+            >
+              Skip Question (-50 points)
             </Button>
           </div>
         </div>
       </div>
-
-      {/* Confetti Effect */}
-      {showConfetti && (
-        <div className="fixed inset-0 pointer-events-none">
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="animate-confetti">
-              {Array.from({ length: 50 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="absolute w-2 h-2 rounded-full"
-                  style={{
-                    backgroundColor: ['#FFD700', '#FF69B4', '#00CED1', '#98FB98'][i % 4],
-                    left: `${Math.random() * 100}%`,
-                    top: `${Math.random() * 100}%`,
-                    transform: `rotate(${Math.random() * 360}deg)`,
-                    animation: `fall ${1 + Math.random() * 2}s linear forwards`,
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

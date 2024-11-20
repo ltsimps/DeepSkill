@@ -1,12 +1,12 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-run/node';
 import { useLoaderData, useFetcher } from '@remix-run/react';
-import { useState, useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { practiceScheduler } from '../services/practice.server';
 import { requireUserId } from '../utils/auth.server';
 import { prisma } from '../utils/db.server';
-import { generateProblem, validateSolution } from '../utils/openai.server';
-import { PracticeInterface } from '../components/practice/PracticeInterface';
-import { PracticeDashboard } from '../components/practice/PracticeDashboard';
+import { generateProblem, validateSolution, generateAnalysis } from '../utils/openai.server';
+import { PracticeLayout } from '../components/practice/PracticeLayout';
+import { PracticeProvider, usePracticeSession } from '../contexts/PracticeContext';
 import type { 
   GeneratedProblem, 
   LoaderData, 
@@ -40,6 +40,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const intent = formData.get('intent') as string;
   const startTime = formData.get('startTime') as string;
   const language = formData.get('language') as string | null;
+  const solution = formData.get('solution') as string;
   
   try {
     if (intent === 'start') {
@@ -106,19 +107,269 @@ export async function action({ request }: ActionFunctionArgs) {
       return json<FetcherData>({ error: 'No problems available' }, { status: 404 });
     }
 
+    if (intent === 'submit') {
+      const problemId = formData.get('problemId') as string;
+      const timeSpent = (Date.now() - Number(startTime)) / 1000; // Convert to seconds
+
+      // Handle skipping
+      if (solution === 'SKIP') {
+        console.log('Skipping problem:', problemId);
+        
+        try {
+          // First, get the next problem before updating the current one
+          const nextProblem = await practiceScheduler.getNextProblem(userId, language);
+          
+          // Then update the current problem's progression
+          await prisma.problemProgression.upsert({
+            where: {
+              userId_problemId: {
+                userId,
+                problemId
+              }
+            },
+            create: {
+              attempts: 1,
+              solved: false,
+              timeSpent,
+              rewardSignal: -50,
+              lastAttempt: new Date(),
+              userSolution: 'SKIP',
+              user: { connect: { id: userId } },
+              problem: { connect: { id: problemId } }
+            },
+            update: {
+              attempts: { increment: 1 },
+              solved: false,
+              timeSpent: { increment: timeSpent },
+              rewardSignal: -50,
+              lastAttempt: new Date(),
+              userSolution: 'SKIP'
+            }
+          });
+          
+          console.log('Successfully recorded skip');
+          
+          // Count skipped problems for this session
+          const skippedProblems = await prisma.problemProgression.count({
+            where: {
+              userId,
+              userSolution: 'SKIP',
+              lastAttempt: {
+                gte: new Date(Number(startTime))
+              }
+            }
+          });
+          
+          if (nextProblem.type === 'PROBLEM_FOUND') {
+            const problem = nextProblem.problem;
+            return json<FetcherData>({ 
+              feedback: {
+                isCorrect: false,
+                message: 'Question skipped. -50 points deducted.',
+                points: -50
+              },
+              problem: {
+                id: problem.id,
+                problem: problem.description,
+                startingCode: problem.type === 'FILL_IN' ? problem.template : problem.startingCode,
+                solution: problem.type === 'FILL_IN' ? 
+                  JSON.parse(problem.fillInSections || '[]')[0]?.solution : 
+                  problem.solution,
+                hints: JSON.parse(problem.hints),
+                type: problem.type,
+                title: problem.title,
+                difficulty: problem.difficulty,
+                language: problem.language
+              },
+              skippedProblems
+            });
+          } else if (nextProblem.type === 'NEED_PRESEEDING') {
+            const newProblem = await generateProblem({
+              difficulty: nextProblem.difficulty === 'EASY' ? 'beginner' : 
+                         nextProblem.difficulty === 'MEDIUM' ? 'intermediate' : 
+                         'advanced',
+              language: language || 'javascript',
+              prompt: 'Generate a coding problem'
+            });
+
+            const problem = await prisma.problem.create({
+              data: {
+                description: newProblem.problem,
+                startingCode: newProblem.startingCode || '',
+                solution: newProblem.solution,
+                source: 'GPT',
+                hints: JSON.stringify(newProblem.hints || []),
+                tags: JSON.stringify(newProblem.testCases || []),
+                type: newProblem.type || 'FILL_IN',
+                difficulty: newProblem.difficulty || 'BEGINNER',
+                language: newProblem.language || 'javascript',
+                title: `Generated Problem - ${new Date().toLocaleString()}`
+              }
+            });
+
+            return json<FetcherData>({ 
+              feedback: {
+                isCorrect: false,
+                message: 'Question skipped. -50 points deducted.',
+                points: -50
+              },
+              problem: {
+                ...newProblem,
+                id: problem.id
+              },
+              skippedProblems
+            });
+          } else {
+            return json<FetcherData>({ 
+              dailyLimitReached: nextProblem.type === 'DAILY_LIMIT_REACHED',
+              skippedProblems
+            });
+          }
+        } catch (error) {
+          console.error('Error handling skip:', error);
+          return json({ error: 'Failed to handle skip' }, { status: 500 });
+        }
+      }
+
+      // Store the solution without LLM validation
+      console.log('Storing solution for problem:', problemId);
+      
+      try {
+        await prisma.problemProgression.upsert({
+          where: {
+            userId_problemId: {
+              userId,
+              problemId
+            }
+          },
+          create: {
+            attempts: 1,
+            solved: null,
+            timeSpent,
+            rewardSignal: 0,
+            lastAttempt: new Date(),
+            userSolution: solution,
+            user: { connect: { id: userId } },
+            problem: { connect: { id: problemId } }
+          },
+          update: {
+            attempts: { increment: 1 },
+            solved: null,
+            timeSpent: { increment: timeSpent },
+            rewardSignal: 0,
+            lastAttempt: new Date(),
+            userSolution: solution
+          }
+        });
+        
+        console.log('Successfully stored solution');
+        
+        return json<FetcherData>({
+          feedback: {
+            isCorrect: null,
+            message: 'Solution recorded. Continue to next question.',
+            points: null
+          }
+        });
+      } catch (error) {
+        console.error('Error storing solution:', error);
+        return json({ error: 'Failed to store solution' }, { status: 500 });
+      }
+    }
+
+    if (intent === 'finish') {
+      console.log('Starting session analysis');
+      
+      // Get all problem progressions for this session
+      const sessionProblems = await prisma.problemProgression.findMany({
+        where: { 
+          userId,
+          lastAttempt: {
+            gte: new Date(startTime)
+          }
+        },
+        include: { problem: true }
+      });
+
+      console.log(`Found ${sessionProblems.length} problems to analyze`);
+      
+      // Analyze all solutions at once
+      const analysisPromises = sessionProblems.map(async (progression) => {
+        if (progression.userSolution === 'SKIP') {
+          return {
+            id: progression.id,
+            isCorrect: false,
+            points: -50
+          };
+        }
+
+        const result = await validateSolution(
+          progression.userSolution,
+          progression.problem.solution,
+          progression.problem.language
+        );
+
+        return {
+          id: progression.id,
+          isCorrect: result.isCorrect,
+          points: result.isCorrect ? 100 : 0,
+          feedback: result.feedback
+        };
+      });
+
+      const analysisResults = await Promise.all(analysisPromises);
+
+      // Update all progressions with results
+      await Promise.all(
+        analysisResults.map(result =>
+          prisma.problemProgression.update({
+            where: { id: result.id },
+            data: {
+              solved: result.isCorrect,
+              rewardSignal: result.points
+            }
+          })
+        )
+      );
+
+      // Calculate total points and generate overall analysis
+      const totalPoints = analysisResults.reduce((acc, res) => acc + res.points, 0);
+      const correctCount = analysisResults.filter(res => res.isCorrect).length;
+      const skippedCount = analysisResults.filter(res => res.points === -50).length;
+
+      const analysis = {
+        totalProblems: sessionProblems.length,
+        correctCount,
+        skippedCount,
+        incorrectCount: sessionProblems.length - correctCount - skippedCount,
+        totalPoints,
+        problemFeedback: analysisResults.map((res, i) => ({
+          title: sessionProblems[i].problem.title,
+          isCorrect: res.isCorrect,
+          points: res.points,
+          feedback: res.feedback
+        }))
+      };
+
+      return json<FetcherData>({
+        sessionComplete: true,
+        analysis,
+        totalPoints
+      });
+    }
+
     if (intent === 'validate') {
       const userCode = formData.get('code') as string;
-      const solution = formData.get('solution') as string;
       const problemId = formData.get('problemId') as string;
       
-      if (!userCode || !solution || !problemId || !startTime) {
+      if (!userCode || !problemId || !startTime) {
         return json<FetcherData>({ error: 'Missing required fields' }, { status: 400 });
       }
 
-      const timeSpent = Date.now() - Number(startTime);
+      const timeSpent = (Date.now() - Number(startTime)) / 1000; // Convert to seconds
       
       try {
-        const result = await validateSolution(userCode, solution, language);
+        const result = await validateSolution(userCode, formData.get('problemSolution') as string, language);
         
         if (!result || typeof result !== 'object') {
           return json<FetcherData>({ error: 'Invalid validation result format' }, { status: 500 });
@@ -132,7 +383,7 @@ export async function action({ request }: ActionFunctionArgs) {
           userId,
           problemId,
           result.isCorrect,
-          timeSpent / 1000
+          timeSpent
         );
         
         const nextProblem = await practiceScheduler.getNextProblem(userId, language);
@@ -168,117 +419,130 @@ export async function action({ request }: ActionFunctionArgs) {
     return json<FetcherData>({ error: 'Invalid intent' }, { status: 400 });
   } catch (error) {
     console.error('Action error:', error);
-    return json<FetcherData>({ 
-      error: error instanceof Error ? error.message : 'Internal server error'
-    }, { status: 500 });
+    return json({ error: 'Failed to process request' }, { status: 500 });
   }
 }
 
-export default function PracticePage() {
+function PracticePage() {
   const { stats } = useLoaderData<typeof loader>();
-  const [currentProblem, setCurrentProblem] = useState<GeneratedProblem | null>(null);
-  const [feedback, setFeedback] = useState<ProblemFeedback | null>(null);
-  const [xpAnimation, setXpAnimation] = useState<{ amount: number; isVisible: boolean }>({ amount: 0, isVisible: false });
-  const [selectedLanguage, setSelectedLanguage] = useState<string>('javascript');
   const fetcher = useFetcher<FetcherData>();
-  const transitionTimeoutRef = useRef<NodeJS.Timeout>();
-
-  const handleStart = () => {
-    fetcher.submit(
-      { intent: 'start', language: selectedLanguage },
-      { method: 'post' }
-    );
-  };
-
-  const handleLanguageChange = (language: string) => {
-    setSelectedLanguage(language);
-  };
-
-  const handleSubmit = (code: string) => {
-    if (!currentProblem?.solution) return;
-    
-    fetcher.submit(
-      {
-        intent: 'validate',
-        code,
-        solution: currentProblem.solution,
-        language: selectedLanguage,
-        problemId: currentProblem.id,
-        startTime: Date.now().toString()
-      },
-      { method: 'post' }
-    );
-  };
-
+  const { state, dispatch } = usePracticeSession();
+  
+  // Handle fetcher data updates
   useEffect(() => {
-    if (fetcher.data?.problem) {
-      setCurrentProblem(fetcher.data.problem);
-      setFeedback(null);
+    if (fetcher.data) {
+      if (fetcher.data.error) {
+        dispatch({ 
+          type: 'SET_ERROR', 
+          error: new Error(fetcher.data.error)
+        });
+        return;
+      }
+
+      if (fetcher.data.dailyLimitReached) {
+        dispatch({ type: 'END_SESSION' });
+      } else if (fetcher.data.problem) {
+        dispatch({ type: 'SET_PROBLEM', problem: fetcher.data.problem });
+      }
+      if (fetcher.data.feedback) {
+        dispatch({ type: 'SET_FEEDBACK', feedback: fetcher.data.feedback });
+        
+        if (fetcher.data.feedback.isCorrect) {
+          dispatch({ 
+            type: 'COMPLETE_PROBLEM',
+            timeSpent: (Date.now() - state.sessionStartTime) / 1000,
+            points: fetcher.data.feedback.points || 100
+          });
+        }
+      }
     }
-    if (fetcher.data?.result) {
-      setFeedback({
-        isCorrect: fetcher.data.result.isCorrect,
-        message: fetcher.data.result.feedback
+  }, [fetcher.data, dispatch, state.sessionStartTime]);
+
+  // Handle solution submission
+  const handleSubmit = (solution: string) => {
+    try {
+      dispatch({ type: 'SET_LOADING', isLoading: true });
+      const startTime = state.sessionStartTime;
+      fetcher.submit(
+        {
+          intent: 'submit',
+          solution,
+          problemId: state.currentProblem?.id || '',
+          startTime: startTime.toString(),
+          language: state.currentProblem?.language || 'javascript'
+        },
+        { method: 'post' }
+      );
+    } catch (error) {
+      dispatch({ 
+        type: 'SET_ERROR',
+        error: error instanceof Error ? error : new Error('Failed to submit solution')
       });
-      
-      if (fetcher.data.xpGained) {
-        setXpAnimation({ amount: fetcher.data.xpGained, isVisible: true });
-        const timer = setTimeout(() => setXpAnimation(prev => ({ ...prev, isVisible: false })), 2000);
-        return () => clearTimeout(timer);
-      }
-      
-      if (fetcher.data.nextProblem) {
-        transitionTimeoutRef.current = setTimeout(() => {
-          setCurrentProblem(fetcher.data.nextProblem);
-          setFeedback(null);
-        }, 3000);
-      } else if (fetcher.data.dailyLimitReached) {
-        transitionTimeoutRef.current = setTimeout(() => {
-          setCurrentProblem(null);
-          setFeedback(null);
-        }, 3000);
-      }
     }
-    
-    return () => {
-      if (transitionTimeoutRef.current) {
-        clearTimeout(transitionTimeoutRef.current);
-      }
-    };
-  }, [fetcher.data]);
+  };
 
-  // Handle client-side hydration
-  const [isClient, setIsClient] = useState(false);
+  // Handle problem skip
+  const handleSkip = () => {
+    try {
+      const startTime = state.sessionStartTime;
+      dispatch({ type: 'SKIP_PROBLEM' });
+      fetcher.submit(
+        {
+          intent: 'submit',
+          solution: 'SKIP',
+          problemId: state.currentProblem?.id || '',
+          startTime: startTime.toString(),
+          language: state.currentProblem?.language || 'javascript'
+        },
+        { method: 'post' }
+      );
+    } catch (error) {
+      dispatch({ 
+        type: 'SET_ERROR',
+        error: error instanceof Error ? error : new Error('Failed to skip problem')
+      });
+    }
+  };
+
+  // Handle starting new session
+  const handleStartNew = () => {
+    try {
+      dispatch({ type: 'START_SESSION' });
+      fetcher.submit(
+        { 
+          intent: 'start',
+          language: 'javascript'
+        },
+        { method: 'post' }
+      );
+    } catch (error) {
+      dispatch({ 
+        type: 'SET_ERROR',
+        error: error instanceof Error ? error : new Error('Failed to start session')
+      });
+    }
+  };
+
+  // Start session on mount if no current problem
   useEffect(() => {
-    setIsClient(true);
-  }, []);
-
-  if (!isClient) {
-    return null; // Return null on server-side to prevent hydration mismatch
-  }
-
-  if (!currentProblem) {
-    return (
-      <PracticeDashboard 
-        onStart={handleStart} 
-        onLanguageChange={handleLanguageChange}
-        selectedLanguage={selectedLanguage}
-      />
-    );
-  }
+    if (!state.currentProblem && !state.isSessionComplete && !state.isLoading) {
+      handleStartNew();
+    }
+  }, [state.currentProblem, state.isSessionComplete, state.isLoading]);
 
   return (
-    <div>
-      <PracticeInterface
-        problem={currentProblem}
-        onSubmit={handleSubmit}
-        feedback={feedback}
-      />
-      {xpAnimation.isVisible && (
-        <div className="fixed top-4 right-4 animate-bounce bg-green-500 text-white px-4 py-2 rounded-full shadow-lg">
-          +{xpAnimation.amount} XP
-        </div>
-      )}
-    </div>
+    <PracticeLayout
+      onSubmit={handleSubmit}
+      onSkip={handleSkip}
+      onStartNew={handleStartNew}
+    />
+  );
+}
+
+export default function Practice() {
+  return (
+    <PracticeProvider>
+      <PracticePage />
+    </PracticeProvider>
   );
 }

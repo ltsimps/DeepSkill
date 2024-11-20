@@ -175,8 +175,9 @@ model Problem {
 model ProblemProgression {
   id               String   @id @default(cuid())
   attempts         Int      @default(0)     // Number of attempts
-  solved           Boolean  @default(false)  // Whether problem was solved
+  solved           Boolean? // Whether problem was solved (null until analyzed)
   lastAttempt      DateTime @default(now()) // Last attempt timestamp
+  userSolution     String?  // The user's submitted solution
   
   // Learning metrics
   easeFactor       Float    @default(2.5)   // SM-2 inspired learning rate

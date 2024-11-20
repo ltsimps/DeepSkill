@@ -65,18 +65,16 @@ export async function handleNewSession(
 		)
 		authSession.set(sessionKey, session.id)
 
+		const finalRedirectTo = redirectTo ?? '/dashboard'
 		return redirect(
-			safeRedirect(redirectTo),
-			combineResponseInits(
-				{
-					headers: {
-						'set-cookie': await authSessionStorage.commitSession(authSession, {
-							expires: remember ? session.expirationDate : undefined,
-						}),
-					},
+			safeRedirect(finalRedirectTo),
+			combineResponseInits(responseInit, {
+				headers: {
+					'set-cookie': await authSessionStorage.commitSession(authSession, {
+						expires: remember ? session.expirationDate : undefined,
+					}),
 				},
-				responseInit,
-			),
+			}),
 		)
 	}
 }
