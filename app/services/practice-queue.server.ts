@@ -143,31 +143,27 @@ export class PracticeQueueService {
       throw new Error('No active session found');
     }
 
-    // Get a problem that hasn't been attempted in this session
+    // Get a random problem that hasn't been attempted in this session
     const problem = await prisma.problem.findFirst({
       where: {
-        language,
+        language: language.toUpperCase(),
         NOT: {
-          OR: [
-            {
-              id: {
-                in: currentSession.problems.map(p => p.problemId)
-              }
-            },
-            {
-              progressions: {
-                some: {
+          id: {
+            in: await prisma.sessionProblem.findMany({
+              where: { 
+                session: { 
                   userId,
-                  solved: true
+                  status: 'IN_PROGRESS'
                 }
-              }
-            }
-          ]
+              },
+              select: { problemId: true },
+            }).then(problems => problems.map(p => p.problemId))
+          }
         }
       },
       orderBy: {
         progressions: {
-          _count: 'asc'  // Prefer less attempted problems
+          _count: 'asc'
         }
       }
     });

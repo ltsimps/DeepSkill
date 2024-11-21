@@ -7,6 +7,8 @@ import { answerAnalysisQueue } from '~/services/answer-analysis.server';
 import { requireUserId } from '~/utils/auth.server';
 import { prisma } from '~/utils/db.server';
 import { practiceQueueService } from '~/services/practice-queue.server';
+import { motion } from 'framer-motion';
+import { Link } from '@remix-run/react';
 
 export const SUPPORTED_LANGUAGES = ['python', 'cpp'] as const;
 export type SupportedLanguage = typeof SUPPORTED_LANGUAGES[number];
@@ -102,19 +104,37 @@ export async function loader({ request }: LoaderArgs) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   
-  const stats = await prisma.practiceSession.aggregate({
+  const problemsToday = await prisma.sessionProblem.count({
     where: {
       userId,
-      createdAt: {
-        gte: today
+      session: {
+        createdAt: {
+          gte: today
+        }
       }
-    },
-    _count: true
+    }
   });
 
   const dailyLimit = 20;
-  const remainingProblems = Math.max(0, dailyLimit - stats._count);
-  console.log(`[Practice Stats] User ${userId} has attempted ${stats._count} problems today, ${remainingProblems} remaining`);
+  const remainingProblems = Math.max(0, dailyLimit - problemsToday);
+  console.log(`[Practice Stats] User ${userId} has attempted ${problemsToday} problems today, ${remainingProblems} remaining`);
+
+  // Enforce daily limit
+  if (remainingProblems <= 0) {
+    return json<LoaderData>({
+      problem: null,
+      session: null,
+      stats: {
+        problemsAttemptedToday: problemsToday,
+        dailyLimit,
+        remainingProblems: 0,
+        streak: user.streak,
+        xp: user.xp,
+        level: user.level,
+        nextLevelXp
+      }
+    });
+  }
 
   // Get current problem from queue
   const url = new URL(request.url);
@@ -142,7 +162,7 @@ export async function loader({ request }: LoaderArgs) {
     } : null,
     session,
     stats: {
-      problemsAttemptedToday: stats._count,
+      problemsAttemptedToday: problemsToday,
       dailyLimit,
       remainingProblems,
       streak: user.streak,
@@ -242,25 +262,159 @@ export default function Practice() {
 
   if (!problem) {
     return (
-      <div className="flex flex-col items-center justify-center p-8">
-        <h2 className="text-xl font-semibold text-white mb-4">No Problems Available</h2>
-        <p className="text-gray-400 mb-8">
-          {stats.remainingProblems === 0
-            ? "You've completed all available problems for today."
-            : "We're generating new problems for you. Please try again in a few minutes."}
-        </p>
-        
-        <div className="space-y-4 w-full max-w-sm">
-          <div className="flex justify-between text-sm text-gray-400">
-            <span>Problems attempted today:</span>
-            <span>{stats.problemsAttemptedToday} / {stats.dailyLimit}</span>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center"
+      >
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{
+            type: "spring",
+            duration: 0.5,
+          }}
+          className="max-w-2xl w-full mx-4"
+        >
+          <div className="relative bg-gradient-to-br from-gray-900 via-purple-900/50 to-gray-900 backdrop-blur-lg rounded-2xl p-8 shadow-xl border border-purple-500/20">
+            {/* Close button */}
+            <Link
+              to="/dashboard"
+              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
+              aria-label="Close"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </Link>
+
+            <div className="flex flex-col items-center text-center space-y-6">
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{
+                  type: "spring",
+                  duration: 0.6,
+                  delay: 0.1,
+                  bounce: 0.4
+                }}
+                className="w-24 h-24 rounded-full bg-purple-600/20 flex items-center justify-center mb-4"
+              >
+                <motion.span
+                  initial={{ rotate: -180, opacity: 0 }}
+                  animate={{ rotate: 0, opacity: 1 }}
+                  transition={{ duration: 0.6, delay: 0.3 }}
+                  className="text-4xl"
+                >
+                  🎉
+                </motion.span>
+              </motion.div>
+              
+              <motion.h2
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.4 }}
+                className="text-3xl font-bold text-white bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent"
+              >
+                You've Crushed It!
+              </motion.h2>
+              
+              <motion.p
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.5 }}
+                className="text-xl text-gray-300"
+              >
+                You've completed all available problems for today. Come back tomorrow for more challenges!
+              </motion.p>
+
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.6 }}
+                className="grid grid-cols-2 gap-8 w-full max-w-md mt-8"
+              >
+                <div className="bg-purple-900/30 rounded-xl p-4 border border-purple-500/20">
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.5, delay: 0.7 }}
+                    className="text-3xl font-bold text-white mb-2"
+                  >
+                    {stats.problemsAttemptedToday}
+                  </motion.div>
+                  <div className="text-sm text-gray-400">Problems Solved Today</div>
+                </div>
+
+                <div className="bg-cyan-900/30 rounded-xl p-4 border border-cyan-500/20">
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.5, delay: 0.8 }}
+                    className="text-3xl font-bold text-white mb-2"
+                  >
+                    {stats.streak}
+                  </motion.div>
+                  <div className="text-sm text-gray-400">Day Streak</div>
+                </div>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.9 }}
+                className="w-full max-w-md mt-4"
+              >
+                <div className="relative pt-1">
+                  <div className="text-xs text-gray-400 mb-2">Daily Progress</div>
+                  <div className="overflow-hidden h-2 text-xs flex rounded-full bg-gray-700">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${(stats.problemsAttemptedToday / stats.dailyLimit) * 100}%` }}
+                      transition={{ duration: 1, delay: 1 }}
+                      className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-gradient-to-r from-purple-500 to-cyan-500"
+                    />
+                  </div>
+                  <div className="text-xs text-gray-400 mt-2">
+                    {stats.problemsAttemptedToday} / {stats.dailyLimit} Problems
+                  </div>
+                </div>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 1.1 }}
+                className="mt-8"
+              >
+                <Link
+                  to="/dashboard"
+                  className="inline-flex items-center px-6 py-3 rounded-full bg-gradient-to-r from-purple-600 to-cyan-600 text-white font-semibold hover:from-purple-700 hover:to-cyan-700 transition-all duration-200 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+                >
+                  <motion.span
+                    initial={{ x: -10, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    transition={{ duration: 0.3, delay: 1.2 }}
+                  >
+                    Return to Dashboard
+                  </motion.span>
+                  <motion.svg
+                    initial={{ x: -10, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    transition={{ duration: 0.3, delay: 1.3 }}
+                    className="ml-2 h-5 w-5"
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path fillRule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clipRule="evenodd" />
+                  </motion.svg>
+                </Link>
+              </motion.div>
+            </div>
           </div>
-          <div className="flex justify-between text-sm text-gray-400">
-            <span>Problems remaining today:</span>
-            <span>{stats.remainingProblems}</span>
-          </div>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
     );
   }
 

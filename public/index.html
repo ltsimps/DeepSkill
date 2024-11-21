@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepSkill Practice</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://unpkg.com/framer-motion@10.16.4/dist/framer-motion.js"></script>
+</head>
+<body>
+    <div id="app">
+        <div class="practice-container">
+            <div class="header">
+                <h1>DeepSkill Practice</h1>
+                <div class="progress-bar">
+                    <div class="progress" id="progress"></div>
+                </div>
+            </div>
+            
+            <div class="practice-area">
+                <div class="score-board">
+                    <div class="score">Score: <span id="score">0</span></div>
+                    <div class="streak">Streak: <span id="streak">0</span>🔥</div>
+                </div>
+                
+                <div class="practice-card" id="practice-card">
+                    <div class="card-content">
+                        <h2>Ready to Practice?</h2>
+                        <p>Master your skills with interactive exercises</p>
+                    </div>
+                </div>
+                
+                <div class="controls">
+                    <button id="start-practice" class="primary-btn">Start Practice</button>
+                    <button id="hint-btn" class="secondary-btn" disabled>Get Hint</button>
+                </div>
+            </div>
+            
+            <div class="achievements">
+                <div class="achievement-item">
+                    <span class="achievement-icon">🎯</span>
+                    <span class="achievement-label">Perfect Streak</span>
+                </div>
+                <div class="achievement-item">
+                    <span class="achievement-icon">⚡️</span>
+                    <span class="achievement-label">Quick Learner</span>
+                </div>
+                <div class="achievement-item">
+                    <span class="achievement-icon">🏆</span>
+                    <span class="achievement-label">Master</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
