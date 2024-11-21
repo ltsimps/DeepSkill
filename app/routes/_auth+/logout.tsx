@@ -1,10 +1,10 @@
-import { redirect, type ActionFunctionArgs } from '@remix-run/node'
-import { logout } from '#app/utils/auth.server.ts'
+import { redirect, type ActionArgs } from '@remix-run/node'
+import { logout } from '~/utils/auth.server'
 
 export async function loader() {
-	return redirect('/')
+	return redirect('/login')
 }
 
-export async function action({ request }: ActionFunctionArgs) {
-	return logout({ request })
+export async function action({ request }: ActionArgs) {
+	return logout(request, '/login')
 }

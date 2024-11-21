@@ -1,13 +1,15 @@
 import { createCookieSessionStorage } from '@remix-run/node'
+import { prisma } from './db.server'
 
 export const authSessionStorage = createCookieSessionStorage({
 	cookie: {
-		name: 'en_session',
-		sameSite: 'lax', // CSRF protection is advised if changing to 'none'
+		name: 'ds_session',
+		sameSite: 'lax',
 		path: '/',
 		httpOnly: true,
-		secrets: process.env.SESSION_SECRET.split(','),
+		secrets: process.env.SESSION_SECRET ? process.env.SESSION_SECRET.split(',') : ['default-secret'],
 		secure: process.env.NODE_ENV === 'production',
+		maxAge: 60 * 60 * 24 * 30, // 30 days
 	},
 })
 
@@ -36,3 +38,21 @@ Object.defineProperty(authSessionStorage, 'commitSession', {
 		return setCookieHeader
 	},
 })
+
+export async function getUser(request: Request) {
+  const session = await authSessionStorage.getSession(request.headers.get('Cookie'))
+  const userId = session.get('userId')
+  if (!userId) return null
+  
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      email: true,
+      username: true,
+      name: true,
+      imageId: true,
+    },
+  })
+  return user
+}

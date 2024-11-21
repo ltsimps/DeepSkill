@@ -149,6 +149,40 @@ export class PracticeScheduler {
     return { type: 'NEED_PRESEEDING' as const, difficulty: targetDifficulty, language: language || 'javascript' }
   }
 
+  async getAvailableProblemsCount(userId: string, language?: string | null) {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    
+    const attemptedToday = await prisma.problemProgression.count({
+      where: {
+        userId,
+        lastAttempt: {
+          gte: today
+        }
+      }
+    })
+
+    const availableProblems = await prisma.problem.count({
+      where: {
+        language: language || 'javascript',
+        NOT: {
+          progressions: {
+            some: {
+              userId,
+              lastAttempt: { gte: today }
+            }
+          }
+        }
+      }
+    })
+
+    return {
+      attempted: attemptedToday,
+      available: availableProblems,
+      remaining: Math.max(0, DAILY_PROBLEM_LIMIT - attemptedToday)
+    }
+  }
+
   // Update problem and user metrics after an attempt
   async updateProgression(
     userId: string,

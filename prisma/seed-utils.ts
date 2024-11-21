@@ -13,10 +13,14 @@ export interface TestCase {
   description: string
 }
 
+export type ProgrammingLanguage = 'javascript' | 'python' | 'cpp';
+export type DifficultyLevel = 'EASY' | 'MEDIUM' | 'HARD';
+
 // Helper to create a FILL_IN type problem
 export function createFillInProblem({
   title,
   difficulty,
+  language,
   template,
   fillInSections,
   description,
@@ -26,7 +30,8 @@ export function createFillInProblem({
   baseComplexity = 1.0,
 }: {
   title: string
-  difficulty: 'EASY' | 'MEDIUM' | 'HARD'
+  difficulty: DifficultyLevel
+  language: ProgrammingLanguage
   template: string
   fillInSections: FillInSection[]
   description: string
@@ -38,9 +43,10 @@ export function createFillInProblem({
   return {
     type: 'FILL_IN',
     difficulty,
-    language: 'JAVASCRIPT', // Default to JavaScript for now
+    language,
     title,
     description,
+    problem: description, // Use description as problem statement
     hints: JSON.stringify(hints),
     tags: JSON.stringify(tags),
     timeLimit,
@@ -63,6 +69,7 @@ export function createFillInProblem({
 export function createScenarioProblem({
   title,
   difficulty,
+  language,
   description,
   startingCode,
   solution,
@@ -73,7 +80,8 @@ export function createScenarioProblem({
   baseComplexity = 1.0,
 }: {
   title: string
-  difficulty: 'EASY' | 'MEDIUM' | 'HARD'
+  difficulty: DifficultyLevel
+  language: ProgrammingLanguage
   description: string
   startingCode: string
   solution: string
@@ -86,9 +94,10 @@ export function createScenarioProblem({
   return {
     type: 'SCENARIO',
     difficulty,
-    language: 'JAVASCRIPT',
+    language,
     title,
     description,
+    problem: description, // Use description as problem statement
     hints: JSON.stringify(hints),
     tags: JSON.stringify(tags),
     timeLimit,
@@ -104,5 +113,52 @@ export function createScenarioProblem({
     averageTime: 0.0,
     dailyUseCount: 0,
     totalUses: 0
+  }
+}
+
+// Helper to create a SCENARIO type problem
+export function createProblem({
+  title,
+  difficulty,
+  language,
+  description,
+  problem,
+  startingCode,
+  solution,
+  testCases,
+  hints = [],
+  tags = [],
+  timeLimit = 300,
+  baseComplexity = 1.0,
+}: {
+  title: string
+  difficulty: DifficultyLevel
+  language: ProgrammingLanguage
+  description: string
+  problem: string
+  startingCode: string
+  solution: string
+  testCases: TestCase[]
+  hints?: string[]
+  tags?: string[]
+  timeLimit?: number
+  baseComplexity?: number
+}): Prisma.ProblemCreateInput {
+  return {
+    title,
+    difficulty,
+    language,
+    description,
+    problem,
+    startingCode,
+    solution,
+    testCases: JSON.stringify(testCases),
+    hints: JSON.stringify(hints),
+    tags: JSON.stringify(tags),
+    timeLimit,
+    baseComplexity,
+    type: 'SCENARIO',
+    source: 'SEEDED',
+    status: 'ACTIVE'
   }
 }

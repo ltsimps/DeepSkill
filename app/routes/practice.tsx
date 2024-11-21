@@ -1,548 +1,327 @@
-import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from '@remix-run/node';
+import { json, redirect, type LoaderArgs, type ActionArgs } from '@remix-run/node';
 import { useLoaderData, useFetcher } from '@remix-run/react';
-import { useEffect } from 'react';
-import { practiceScheduler } from '../services/practice.server';
-import { requireUserId } from '../utils/auth.server';
-import { prisma } from '../utils/db.server';
-import { generateProblem, validateSolution, generateAnalysis } from '../utils/openai.server';
-import { PracticeLayout } from '../components/practice/PracticeLayout';
-import { PracticeProvider, usePracticeSession } from '../contexts/PracticeContext';
-import type { 
-  GeneratedProblem, 
-  LoaderData, 
-  ProblemProgression,
-  FetcherData,
-  ProblemFeedback 
-} from '../types/practice';
+import { useState, useEffect } from 'react';
+import { ProblemView } from '~/components/practice/ProblemView';
+import { LanguageSelect } from '~/components/practice/LanguageSelect';
+import { answerAnalysisQueue } from '~/services/answer-analysis.server';
+import { requireUserId } from '~/utils/auth.server';
+import { prisma } from '~/utils/db.server';
+import { practiceQueueService } from '~/services/practice-queue.server';
 
-export async function loader({ request }: LoaderFunctionArgs) {
-  const userId = await requireUserId(request);
-  const metrics = await prisma.problemProgression.findMany({
-    where: { userId },
-    include: { problem: true },
-    orderBy: { lastAttempt: 'desc' },
-    take: 10
-  }) as ProblemProgression[];
+export const SUPPORTED_LANGUAGES = ['python', 'cpp'] as const;
+export type SupportedLanguage = typeof SUPPORTED_LANGUAGES[number];
 
-  const stats = {
-    totalAttempts: metrics.reduce((acc, m) => acc + m.attempts, 0),
-    problemsSolved: metrics.filter(m => m.solved).length,
-    averageTime: metrics.reduce((acc, m) => acc + m.timeSpent, 0) / metrics.length || 0,
-    streaks: Math.max(...metrics.map(m => m.consecutiveCorrect), 0)
+interface LoaderData {
+  problem: {
+    id: string;
+    title: string;
+    description: string;
+    startingCode: string;
+    difficulty: string;
+    language: SupportedLanguage;
+    timeLimit: number;
+    hints: string;
+  } | null;
+  session: {
+    id: string;
+    status: string;
+  } | null;
+  stats: {
+    problemsAttemptedToday: number;
+    dailyLimit: number;
+    remainingProblems: number;
+    streak: number;
+    xp: number;
+    level: number;
+    nextLevelXp: number;
   };
-
-  return json<LoaderData>({ stats });
+  similarProblems?: Array<{
+    id: string;
+    title: string;
+    difficulty: string;
+    distance: number;
+  }>;
 }
 
-export async function action({ request }: ActionFunctionArgs) {
+export async function loader({ request }: LoaderArgs) {
+  const userId = await requireUserId(request);
+  console.log(`[Practice Loader] User ${userId} requesting practice problem`);
+
+  // Get user stats
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      streak: true,
+      xp: true,
+      level: true,
+      lastPractice: true
+    }
+  });
+
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  // Check if streak should be reset (no practice in last 24 hours)
+  const lastPractice = user.lastPractice;
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  if (!lastPractice || lastPractice < yesterday) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { streak: 0 }
+    });
+    user.streak = 0;
+  }
+
+  // Calculate XP needed for next level (exponential growth)
+  const baseXp = 1000;
+  const nextLevelXp = Math.floor(baseXp * Math.pow(1.5, user.level - 1));
+
+  // Get or create a practice session
+  let session = await prisma.practiceSession.findFirst({
+    where: {
+      userId,
+      status: 'IN_PROGRESS'
+    }
+  });
+
+  if (!session) {
+    console.log(`[Practice Loader] Creating new session for user ${userId}`);
+    session = await prisma.practiceSession.create({
+      data: {
+        userId,
+        status: 'IN_PROGRESS'
+      }
+    });
+  }
+
+  // Get practice stats
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const stats = await prisma.practiceSession.aggregate({
+    where: {
+      userId,
+      createdAt: {
+        gte: today
+      }
+    },
+    _count: true
+  });
+
+  const dailyLimit = 20;
+  const remainingProblems = Math.max(0, dailyLimit - stats._count);
+  console.log(`[Practice Stats] User ${userId} has attempted ${stats._count} problems today, ${remainingProblems} remaining`);
+
+  // Get current problem from queue
+  const url = new URL(request.url);
+  const language = url.searchParams.get('language') === 'cpp' ? 'cpp' : 'python';
+  console.log(`[Practice Loader] Getting next ${language} problem for user ${userId}`);
+  
+  const problem = await practiceQueueService.getNextProblem(userId, language);
+
+  if (!problem) {
+    console.log(`[Practice Loader] No problems available for user ${userId}`);
+  } else {
+    console.log(`[Practice Loader] Serving problem ${problem.id} to user ${userId}`);
+  }
+
+  return json<LoaderData>({
+    problem: problem ? {
+      id: problem.id,
+      title: problem.title,
+      description: problem.description,
+      startingCode: problem.startingCode,
+      difficulty: problem.difficulty,
+      language: problem.language as SupportedLanguage,
+      timeLimit: problem.timeLimit,
+      hints: problem.hints
+    } : null,
+    session,
+    stats: {
+      problemsAttemptedToday: stats._count,
+      dailyLimit,
+      remainingProblems,
+      streak: user.streak,
+      xp: user.xp,
+      level: user.level,
+      nextLevelXp
+    },
+    similarProblems: []
+  });
+}
+
+export async function action({ request }: ActionArgs) {
   const userId = await requireUserId(request);
   const formData = await request.formData();
-  const intent = formData.get('intent') as string;
-  const startTime = formData.get('startTime') as string;
-  const language = formData.get('language') as string | null;
-  const solution = formData.get('solution') as string;
-  
-  try {
-    if (intent === 'start') {
-      const result = await practiceScheduler.getNextProblem(userId, language);
-      
-      if (result.type === 'DAILY_LIMIT_REACHED') {
-        return json<FetcherData>({ 
-          dailyLimitReached: true,
-          message: "You've reached your daily practice limit. Come back tomorrow!" 
-        });
-      }
-      
-      if (result.type === 'NEED_PRESEEDING') {
-        const newProblem = await generateProblem({
-          difficulty: result.difficulty === 'EASY' ? 'beginner' : 
-                     result.difficulty === 'MEDIUM' ? 'intermediate' : 
-                     'advanced',
-          language: language || 'javascript',
-          prompt: 'Generate a coding problem'
-        });
+  const sessionId = formData.get('sessionId') as string;
+  const problemId = formData.get('problemId') as string;
+  const answer = formData.get('answer') as string;
 
-        const problem = await prisma.problem.create({
-          data: {
-            description: newProblem.problem,
-            startingCode: newProblem.startingCode || '',
-            solution: newProblem.solution,
-            source: 'GPT',
-            hints: JSON.stringify(newProblem.hints || []),
-            tags: JSON.stringify(newProblem.testCases || []),
-            type: newProblem.type || 'FILL_IN',
-            difficulty: newProblem.difficulty || 'BEGINNER',
-            language: newProblem.language || 'javascript',
-            title: `Generated Problem - ${new Date().toLocaleString()}`
-          }
-        });
-        
-        return json<FetcherData>({ 
-          problem: {
-            ...newProblem,
-            id: problem.id
-          }
-        });
-      }
-      
-      if (result.type === 'PROBLEM_FOUND') {
-        const problem = result.problem;
-        return json<FetcherData>({ 
-          problem: {
-            problem: problem.description,
-            startingCode: problem.type === 'FILL_IN' ? problem.template : problem.startingCode,
-            solution: problem.type === 'FILL_IN' ? 
-              JSON.parse(problem.fillInSections || '[]')[0]?.solution : 
-              problem.solution,
-            hints: JSON.parse(problem.hints),
-            type: problem.type,
-            title: problem.title,
-            difficulty: problem.difficulty,
-            id: problem.id,
-            language: problem.language
-          }
-        });
-      }
-      
-      return json<FetcherData>({ error: 'No problems available' }, { status: 404 });
-    }
+  console.log(`[Practice Action] User ${userId} submitted solution for problem ${problemId}`);
 
-    if (intent === 'submit') {
-      const problemId = formData.get('problemId') as string;
-      const timeSpent = (Date.now() - Number(startTime)) / 1000; // Convert to seconds
-
-      // Handle skipping
-      if (solution === 'SKIP') {
-        console.log('Skipping problem:', problemId);
-        
-        try {
-          // First, get the next problem before updating the current one
-          const nextProblem = await practiceScheduler.getNextProblem(userId, language);
-          
-          // Then update the current problem's progression
-          await prisma.problemProgression.upsert({
-            where: {
-              userId_problemId: {
-                userId,
-                problemId
-              }
-            },
-            create: {
-              attempts: 1,
-              solved: false,
-              timeSpent,
-              rewardSignal: -50,
-              lastAttempt: new Date(),
-              userSolution: 'SKIP',
-              user: { connect: { id: userId } },
-              problem: { connect: { id: problemId } }
-            },
-            update: {
-              attempts: { increment: 1 },
-              solved: false,
-              timeSpent: { increment: timeSpent },
-              rewardSignal: -50,
-              lastAttempt: new Date(),
-              userSolution: 'SKIP'
-            }
-          });
-          
-          console.log('Successfully recorded skip');
-          
-          // Count skipped problems for this session
-          const skippedProblems = await prisma.problemProgression.count({
-            where: {
-              userId,
-              userSolution: 'SKIP',
-              lastAttempt: {
-                gte: new Date(Number(startTime))
-              }
-            }
-          });
-          
-          if (nextProblem.type === 'PROBLEM_FOUND') {
-            const problem = nextProblem.problem;
-            return json<FetcherData>({ 
-              feedback: {
-                isCorrect: false,
-                message: 'Question skipped. -50 points deducted.',
-                points: -50
-              },
-              problem: {
-                id: problem.id,
-                problem: problem.description,
-                startingCode: problem.type === 'FILL_IN' ? problem.template : problem.startingCode,
-                solution: problem.type === 'FILL_IN' ? 
-                  JSON.parse(problem.fillInSections || '[]')[0]?.solution : 
-                  problem.solution,
-                hints: JSON.parse(problem.hints),
-                type: problem.type,
-                title: problem.title,
-                difficulty: problem.difficulty,
-                language: problem.language
-              },
-              skippedProblems
-            });
-          } else if (nextProblem.type === 'NEED_PRESEEDING') {
-            const newProblem = await generateProblem({
-              difficulty: nextProblem.difficulty === 'EASY' ? 'beginner' : 
-                         nextProblem.difficulty === 'MEDIUM' ? 'intermediate' : 
-                         'advanced',
-              language: language || 'javascript',
-              prompt: 'Generate a coding problem'
-            });
-
-            const problem = await prisma.problem.create({
-              data: {
-                description: newProblem.problem,
-                startingCode: newProblem.startingCode || '',
-                solution: newProblem.solution,
-                source: 'GPT',
-                hints: JSON.stringify(newProblem.hints || []),
-                tags: JSON.stringify(newProblem.testCases || []),
-                type: newProblem.type || 'FILL_IN',
-                difficulty: newProblem.difficulty || 'BEGINNER',
-                language: newProblem.language || 'javascript',
-                title: `Generated Problem - ${new Date().toLocaleString()}`
-              }
-            });
-
-            return json<FetcherData>({ 
-              feedback: {
-                isCorrect: false,
-                message: 'Question skipped. -50 points deducted.',
-                points: -50
-              },
-              problem: {
-                ...newProblem,
-                id: problem.id
-              },
-              skippedProblems
-            });
-          } else {
-            return json<FetcherData>({ 
-              dailyLimitReached: nextProblem.type === 'DAILY_LIMIT_REACHED',
-              skippedProblems
-            });
-          }
-        } catch (error) {
-          console.error('Error handling skip:', error);
-          return json({ error: 'Failed to handle skip' }, { status: 500 });
-        }
-      }
-
-      // Store the solution without LLM validation
-      console.log('Storing solution for problem:', problemId);
-      
-      try {
-        await prisma.problemProgression.upsert({
-          where: {
-            userId_problemId: {
-              userId,
-              problemId
-            }
-          },
-          create: {
-            attempts: 1,
-            solved: null,
-            timeSpent,
-            rewardSignal: 0,
-            lastAttempt: new Date(),
-            userSolution: solution,
-            user: { connect: { id: userId } },
-            problem: { connect: { id: problemId } }
-          },
-          update: {
-            attempts: { increment: 1 },
-            solved: null,
-            timeSpent: { increment: timeSpent },
-            rewardSignal: 0,
-            lastAttempt: new Date(),
-            userSolution: solution
-          }
-        });
-        
-        console.log('Successfully stored solution');
-        
-        return json<FetcherData>({
-          feedback: {
-            isCorrect: null,
-            message: 'Solution recorded. Continue to next question.',
-            points: null
-          }
-        });
-      } catch (error) {
-        console.error('Error storing solution:', error);
-        return json({ error: 'Failed to store solution' }, { status: 500 });
-      }
-    }
-
-    if (intent === 'finish') {
-      console.log('Starting session analysis');
-      
-      // Get all problem progressions for this session
-      const sessionProblems = await prisma.problemProgression.findMany({
-        where: { 
-          userId,
-          lastAttempt: {
-            gte: new Date(startTime)
-          }
-        },
-        include: { problem: true }
-      });
-
-      console.log(`Found ${sessionProblems.length} problems to analyze`);
-      
-      // Analyze all solutions at once
-      const analysisPromises = sessionProblems.map(async (progression) => {
-        if (progression.userSolution === 'SKIP') {
-          return {
-            id: progression.id,
-            isCorrect: false,
-            points: -50
-          };
-        }
-
-        const result = await validateSolution(
-          progression.userSolution,
-          progression.problem.solution,
-          progression.problem.language
-        );
-
-        return {
-          id: progression.id,
-          isCorrect: result.isCorrect,
-          points: result.isCorrect ? 100 : 0,
-          feedback: result.feedback
-        };
-      });
-
-      const analysisResults = await Promise.all(analysisPromises);
-
-      // Update all progressions with results
-      await Promise.all(
-        analysisResults.map(result =>
-          prisma.problemProgression.update({
-            where: { id: result.id },
-            data: {
-              solved: result.isCorrect,
-              rewardSignal: result.points
-            }
-          })
-        )
-      );
-
-      // Calculate total points and generate overall analysis
-      const totalPoints = analysisResults.reduce((acc, res) => acc + res.points, 0);
-      const correctCount = analysisResults.filter(res => res.isCorrect).length;
-      const skippedCount = analysisResults.filter(res => res.points === -50).length;
-
-      const analysis = {
-        totalProblems: sessionProblems.length,
-        correctCount,
-        skippedCount,
-        incorrectCount: sessionProblems.length - correctCount - skippedCount,
-        totalPoints,
-        problemFeedback: analysisResults.map((res, i) => ({
-          title: sessionProblems[i].problem.title,
-          isCorrect: res.isCorrect,
-          points: res.points,
-          feedback: res.feedback
-        }))
-      };
-
-      return json<FetcherData>({
-        sessionComplete: true,
-        analysis,
-        totalPoints
-      });
-    }
-
-    if (intent === 'validate') {
-      const userCode = formData.get('code') as string;
-      const problemId = formData.get('problemId') as string;
-      
-      if (!userCode || !problemId || !startTime) {
-        return json<FetcherData>({ error: 'Missing required fields' }, { status: 400 });
-      }
-
-      const timeSpent = (Date.now() - Number(startTime)) / 1000; // Convert to seconds
-      
-      try {
-        const result = await validateSolution(userCode, formData.get('problemSolution') as string, language);
-        
-        if (!result || typeof result !== 'object') {
-          return json<FetcherData>({ error: 'Invalid validation result format' }, { status: 500 });
-        }
-        
-        if (typeof result.isCorrect !== 'boolean' || !result.feedback) {
-          return json<FetcherData>({ error: 'Missing required validation fields' }, { status: 500 });
-        }
-
-        const { progression, xpGained } = await practiceScheduler.updateProgression(
-          userId,
-          problemId,
-          result.isCorrect,
-          timeSpent
-        );
-        
-        const nextProblem = await practiceScheduler.getNextProblem(userId, language);
-        
-        return json<FetcherData>({ 
-          result,
-          xpGained,
-          nextProblem: nextProblem.type === 'PROBLEM_FOUND' ? {
-            problem: nextProblem.problem.description,
-            startingCode: nextProblem.problem.type === 'FILL_IN' ? 
-              nextProblem.problem.template : 
-              nextProblem.problem.startingCode,
-            solution: nextProblem.problem.type === 'FILL_IN' ? 
-              JSON.parse(nextProblem.problem.fillInSections || '[]')[0]?.solution : 
-              nextProblem.problem.solution,
-            hints: JSON.parse(nextProblem.problem.hints),
-            type: nextProblem.problem.type,
-            title: nextProblem.problem.title,
-            difficulty: nextProblem.problem.difficulty,
-            id: nextProblem.problem.id,
-            language: nextProblem.problem.language
-          } : null,
-          dailyLimitReached: nextProblem.type === 'DAILY_LIMIT_REACHED'
-        });
-      } catch (error) {
-        console.error('Error validating solution:', error);
-        return json<FetcherData>({ 
-          error: error instanceof Error ? error.message : 'Failed to validate solution'
-        }, { status: 500 });
-      }
-    }
-
-    return json<FetcherData>({ error: 'Invalid intent' }, { status: 400 });
-  } catch (error) {
-    console.error('Action error:', error);
-    return json({ error: 'Failed to process request' }, { status: 500 });
-  }
-}
-
-function PracticePage() {
-  const { stats } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher<FetcherData>();
-  const { state, dispatch } = usePracticeSession();
-  
-  // Handle fetcher data updates
-  useEffect(() => {
-    if (fetcher.data) {
-      if (fetcher.data.error) {
-        dispatch({ 
-          type: 'SET_ERROR', 
-          error: new Error(fetcher.data.error)
-        });
-        return;
-      }
-
-      if (fetcher.data.dailyLimitReached) {
-        dispatch({ type: 'END_SESSION' });
-      } else if (fetcher.data.problem) {
-        dispatch({ type: 'SET_PROBLEM', problem: fetcher.data.problem });
-      }
-      if (fetcher.data.feedback) {
-        dispatch({ type: 'SET_FEEDBACK', feedback: fetcher.data.feedback });
-        
-        if (fetcher.data.feedback.isCorrect) {
-          dispatch({ 
-            type: 'COMPLETE_PROBLEM',
-            timeSpent: (Date.now() - state.sessionStartTime) / 1000,
-            points: fetcher.data.feedback.points || 100
-          });
-        }
-      }
-    }
-  }, [fetcher.data, dispatch, state.sessionStartTime]);
-
-  // Handle solution submission
-  const handleSubmit = (solution: string) => {
-    try {
-      dispatch({ type: 'SET_LOADING', isLoading: true });
-      const startTime = state.sessionStartTime;
-      fetcher.submit(
-        {
-          intent: 'submit',
-          solution,
-          problemId: state.currentProblem?.id || '',
-          startTime: startTime.toString(),
-          language: state.currentProblem?.language || 'javascript'
-        },
-        { method: 'post' }
-      );
-    } catch (error) {
-      dispatch({ 
-        type: 'SET_ERROR',
-        error: error instanceof Error ? error : new Error('Failed to submit solution')
-      });
-    }
-  };
-
-  // Handle problem skip
-  const handleSkip = () => {
-    try {
-      const startTime = state.sessionStartTime;
-      dispatch({ type: 'SKIP_PROBLEM' });
-      fetcher.submit(
-        {
-          intent: 'submit',
-          solution: 'SKIP',
-          problemId: state.currentProblem?.id || '',
-          startTime: startTime.toString(),
-          language: state.currentProblem?.language || 'javascript'
-        },
-        { method: 'post' }
-      );
-    } catch (error) {
-      dispatch({ 
-        type: 'SET_ERROR',
-        error: error instanceof Error ? error : new Error('Failed to skip problem')
-      });
-    }
-  };
-
-  // Handle starting new session
-  const handleStartNew = () => {
-    try {
-      dispatch({ type: 'START_SESSION' });
-      fetcher.submit(
-        { 
-          intent: 'start',
-          language: 'javascript'
-        },
-        { method: 'post' }
-      );
-    } catch (error) {
-      dispatch({ 
-        type: 'SET_ERROR',
-        error: error instanceof Error ? error : new Error('Failed to start session')
-      });
-    }
-  };
-
-  // Start session on mount if no current problem
-  useEffect(() => {
-    if (!state.currentProblem && !state.isSessionComplete && !state.isLoading) {
-      handleStartNew();
-    }
-  }, [state.currentProblem, state.isSessionComplete, state.isLoading]);
-
-  return (
-    <PracticeLayout
-      onSubmit={handleSubmit}
-      onSkip={handleSkip}
-      onStartNew={handleStartNew}
-    />
+  // Queue the analysis
+  const jobId = await answerAnalysisQueue.queueAnalysis(
+    sessionId,
+    problemId,
+    userId,
+    answer,
+    1
   );
+  console.log(`[Practice Action] Analysis job ${jobId} queued for problem ${problemId}`);
+
+  // Mark the session as completed
+  await prisma.practiceSession.update({
+    where: { id: sessionId },
+    data: { status: 'COMPLETED' }
+  });
+  console.log(`[Practice Action] Session ${sessionId} marked as completed`);
+
+  // Create a new session for the next problem
+  const newSession = await prisma.practiceSession.create({
+    data: {
+      userId,
+      status: 'IN_PROGRESS'
+    }
+  });
+  console.log(`[Practice Action] Created new session ${newSession.id} for user ${userId}`);
+
+  // Update user stats
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      streak: true,
+      xp: true,
+      level: true
+    }
+  });
+
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  const xpReward = 100;
+  const newXp = user.xp + xpReward;
+  const newLevel = Math.floor(Math.log2(newXp / 1000) + 1);
+  const newStreak = user.streak + 1;
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      xp: newXp,
+      level: newLevel,
+      streak: newStreak,
+      lastPractice: new Date()
+    }
+  });
+
+  const url = new URL(request.url);
+  const language = url.searchParams.get('language') === 'cpp' ? 'cpp' : 'python';
+  
+  return redirect(`/practice?language=${language}`);
 }
 
 export default function Practice() {
+  const { problem, session, stats, similarProblems } = useLoaderData<LoaderData>();
+  const [selectedLanguage, setSelectedLanguage] = useState<SupportedLanguage>('python');
+  const fetcher = useFetcher();
+
+  const handleSubmit = async (answer: string) => {
+    if (!session || !problem) return;
+
+    const formData = new FormData();
+    formData.append('sessionId', session.id);
+    formData.append('problemId', problem.id);
+    formData.append('answer', answer);
+
+    fetcher.submit(formData, { method: 'post' });
+  };
+
+  if (!problem) {
+    return (
+      <div className="flex flex-col items-center justify-center p-8">
+        <h2 className="text-xl font-semibold text-white mb-4">No Problems Available</h2>
+        <p className="text-gray-400 mb-8">
+          {stats.remainingProblems === 0
+            ? "You've completed all available problems for today."
+            : "We're generating new problems for you. Please try again in a few minutes."}
+        </p>
+        
+        <div className="space-y-4 w-full max-w-sm">
+          <div className="flex justify-between text-sm text-gray-400">
+            <span>Problems attempted today:</span>
+            <span>{stats.problemsAttemptedToday} / {stats.dailyLimit}</span>
+          </div>
+          <div className="flex justify-between text-sm text-gray-400">
+            <span>Problems remaining today:</span>
+            <span>{stats.remainingProblems}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const progressPercent = (stats.xp / stats.nextLevelXp) * 100;
+
   return (
-    <PracticeProvider>
-      <PracticePage />
-    </PracticeProvider>
+    <div className="flex flex-col space-y-4 p-6">
+      <div className="flex justify-between items-center">
+        <div className="flex items-center space-x-6">
+          <h1 className="text-2xl font-bold">Practice</h1>
+          <div className="flex items-center space-x-4">
+            {/* Level Badge */}
+            <div className="flex items-center space-x-2">
+              <div className="w-10 h-10 rounded-full bg-purple-600 flex items-center justify-center">
+                <span className="text-white font-bold">{stats.level}</span>
+              </div>
+              {/* XP Progress Bar */}
+              <div className="w-32">
+                <div className="text-xs text-gray-400 mb-1">Level {stats.level}</div>
+                <div className="h-2 bg-gray-700 rounded-full">
+                  <div
+                    className="h-full bg-purple-600 rounded-full transition-all duration-500"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                <div className="text-xs text-gray-400 mt-1">
+                  {stats.xp} / {stats.nextLevelXp} XP
+                </div>
+              </div>
+            </div>
+            {/* Streak Badge */}
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center">
+                <span className="text-white font-bold">🔥</span>
+              </div>
+              <span className="text-orange-500 font-bold">{stats.streak} days</span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2">
+            <span className="text-sm text-gray-400">Problems today:</span>
+            <span className="text-sm font-semibold">{stats.problemsAttemptedToday} / {stats.dailyLimit}</span>
+          </div>
+          <LanguageSelect
+            value={selectedLanguage}
+            onChange={(lang) => {
+              setSelectedLanguage(lang);
+              window.location.href = `/practice?language=${lang}`;
+            }}
+          />
+        </div>
+      </div>
+      
+      <ProblemView
+        problem={problem!}
+        onSubmit={handleSubmit}
+        isSubmitting={fetcher.state !== 'idle'}
+        stats={stats}
+        similarProblems={similarProblems}
+      />
+    </div>
   );
 }

@@ -1,62 +1,87 @@
-import { createId as cuid } from '@paralleldrive/cuid2'
 import { createCookieSessionStorage, redirect } from '@remix-run/node'
-import { z } from 'zod'
 import { combineHeaders } from './misc.tsx'
+import { createId as cuid } from '@paralleldrive/cuid2'
+import { type Toast, type ToastInput, ToastSchema } from '#app/types/toast'
+
+export { Toast, ToastInput, ToastSchema }
+
+// Validate environment variables
+if (!process.env.SESSION_SECRET) {
+  throw new Error('SESSION_SECRET environment variable is required');
+}
 
 export const toastKey = 'toast'
 
-const ToastSchema = z.object({
-	description: z.string(),
-	id: z.string().default(() => cuid()),
-	title: z.string().optional(),
-	type: z.enum(['message', 'success', 'error']).default('message'),
-})
-
-export type Toast = z.infer<typeof ToastSchema>
-export type ToastInput = z.input<typeof ToastSchema>
+const isSecureEnvironment = process.env.NODE_ENV === 'production' || process.env.ENABLE_HTTPS === 'true'
 
 export const toastSessionStorage = createCookieSessionStorage({
-	cookie: {
-		name: 'en_toast',
-		sameSite: 'lax',
-		path: '/',
-		httpOnly: true,
-		secrets: process.env.SESSION_SECRET.split(','),
-		secure: process.env.NODE_ENV === 'production',
-	},
+  cookie: {
+    name: 'en_toast',
+    sameSite: 'lax',
+    path: '/',
+    httpOnly: true,
+    secrets: process.env.SESSION_SECRET.split(','),
+    secure: isSecureEnvironment,
+    maxAge: 60 * 60 * 24, // 24 hours
+  },
 })
 
 export async function redirectWithToast(
-	url: string,
-	toast: ToastInput,
-	init?: ResponseInit,
+  url: string,
+  toast: ToastInput,
+  init?: ResponseInit,
 ) {
-	return redirect(url, {
-		...init,
-		headers: combineHeaders(init?.headers, await createToastHeaders(toast)),
-	})
+  try {
+    return redirect(url, {
+      ...init,
+      headers: combineHeaders(init?.headers, await createToastHeaders(toast)),
+    })
+  } catch (error) {
+    console.error('Error in redirectWithToast:', error);
+    // Fallback redirect without toast
+    return redirect(url, init);
+  }
 }
 
 export async function createToastHeaders(toastInput: ToastInput) {
-	const session = await toastSessionStorage.getSession()
-	const toast = ToastSchema.parse(toastInput)
-	session.flash(toastKey, toast)
-	const cookie = await toastSessionStorage.commitSession(session)
-	return new Headers({ 'set-cookie': cookie })
+  try {
+    const session = await toastSessionStorage.getSession()
+    const toast = ToastSchema.parse({
+      ...toastInput,
+      id: toastInput.id ?? cuid()
+    })
+    session.flash(toastKey, toast)
+    const cookie = await toastSessionStorage.commitSession(session)
+    return new Headers({ 'set-cookie': cookie })
+  } catch (error) {
+    console.error('Error in createToastHeaders:', error);
+    return new Headers();
+  }
 }
 
 export async function getToast(request: Request) {
-	const session = await toastSessionStorage.getSession(
-		request.headers.get('cookie'),
-	)
-	const result = ToastSchema.safeParse(session.get(toastKey))
-	const toast = result.success ? result.data : null
-	return {
-		toast,
-		headers: toast
-			? new Headers({
-					'set-cookie': await toastSessionStorage.destroySession(session),
-				})
-			: null,
-	}
+  try {
+    const session = await toastSessionStorage.getSession(
+      request.headers.get('cookie'),
+    )
+    const result = ToastSchema.safeParse(session.get(toastKey))
+    const toast = result.success ? result.data : null
+    
+    if (!toast) {
+      return { toast: null, headers: null };
+    }
+
+    try {
+      const headers = new Headers({
+        'set-cookie': await toastSessionStorage.destroySession(session),
+      });
+      return { toast, headers };
+    } catch (error) {
+      console.error('Error destroying toast session:', error);
+      return { toast, headers: null };
+    }
+  } catch (error) {
+    console.error('Error in getToast:', error);
+    return { toast: null, headers: null };
+  }
 }

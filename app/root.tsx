@@ -1,5 +1,6 @@
 import {
 	json,
+	redirect,
 	type LoaderFunctionArgs,
 	type HeadersFunction,
 	type LinksFunction,
@@ -18,14 +19,14 @@ import {
 	useSubmit,
 } from '@remix-run/react'
 import { withSentry } from '@sentry/remix'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { HoneypotProvider } from 'remix-utils/honeypot/react'
 import appleTouchIconAssetUrl from './assets/favicons/apple-touch-icon.png'
 import faviconAssetUrl from './assets/favicons/favicon.svg'
+import fontsStylesheetUrl from './styles/fonts.css?url'
 import { GeneralErrorBoundary } from './components/error-boundary.tsx'
 import { EpicProgress } from './components/progress-bar.tsx'
-import { SearchBar } from './components/search-bar.tsx'
-import { useToast } from './components/toaster.tsx'
+import { useToast, ToastProvider } from './components/toaster.tsx'
 import { Button } from './components/ui/button.tsx'
 import {
 	DropdownMenu,
@@ -36,11 +37,6 @@ import {
 } from './components/ui/dropdown-menu.tsx'
 import { Icon, href as iconsHref } from './components/ui/icon.tsx'
 import { EpicToaster } from './components/ui/sonner.tsx'
-import {
-	ThemeSwitch,
-	useOptionalTheme,
-	useTheme,
-} from './routes/resources+/theme-switch.tsx'
 import tailwindStyleSheetUrl from './styles/tailwind.css?url'
 import { getUserId, logout } from './utils/auth.server.ts'
 import { ClientHintCheck, getHints } from './utils/client-hints.tsx'
@@ -53,11 +49,14 @@ import { type Theme, getTheme } from './utils/theme.server.ts'
 import { makeTimings, time } from './utils/timing.server.ts'
 import { getToast } from './utils/toast.server.ts'
 import { useOptionalUser, useUser } from './utils/user.ts'
+import { ThemeSwitch, useTheme } from './routes/resources+/theme-switch.tsx'
+import { useOptionalRequestInfo } from './utils/request-info.ts'
+import { initializeServices } from './services/init.server'
 
 export const links: LinksFunction = () => {
 	return [
-		// Preload svg sprite as a resource to avoid render blocking
-		{ rel: 'preload', href: iconsHref, as: 'image' },
+		// Prefetch svg sprite instead of preloading to avoid warnings
+		{ rel: 'prefetch', href: iconsHref, type: 'image/svg+xml' },
 		{
 			rel: 'icon',
 			href: '/favicon.ico',
@@ -71,6 +70,7 @@ export const links: LinksFunction = () => {
 			crossOrigin: 'use-credentials',
 		} as const, // necessary to make typescript happy
 		{ rel: 'stylesheet', href: tailwindStyleSheetUrl },
+		{ rel: 'stylesheet', href: fontsStylesheetUrl },
 	].filter(Boolean)
 }
 
@@ -82,6 +82,7 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
+	await initializeServices()
 	const timings = makeTimings('root loader')
 	const userId = await time(() => getUserId(request), {
 		timings,
@@ -89,37 +90,51 @@ export async function loader({ request }: LoaderFunctionArgs) {
 		desc: 'getUserId in root',
 	})
 
+	// Handle authentication redirects
+	const url = new URL(request.url)
+	const publicRoutes = ['/', '/login', '/signup']
+	const protectedRoutes = ['/dashboard', '/profile', '/settings']
+  
+	if (userId) {
+		// If user is logged in and trying to access public routes, redirect to dashboard
+		if (publicRoutes.includes(url.pathname)) {
+			return redirect('/dashboard')
+		}
+	} else {
+		// If user is not logged in and trying to access protected routes or practice, redirect to login
+		if (protectedRoutes.some(route => url.pathname.startsWith(route)) || url.pathname.startsWith('/practice')) {
+			return redirect('/login')
+		}
+	}
+
 	const user = userId
 		? await time(
 				() =>
-					prisma.user.findUniqueOrThrow({
+					prisma.user.findUnique({
+						where: { id: userId },
 						select: {
 							id: true,
 							name: true,
 							username: true,
+							email: true,
 							image: { select: { id: true } },
-							roles: {
-								select: {
-									name: true,
-									permissions: {
-										select: { entity: true, action: true, access: true },
-									},
-								},
-							},
+							roles: true,
 						},
-						where: { id: userId },
 					}),
 				{ timings, type: 'find user', desc: 'find user in root' },
-			)
+		  )
 		: null
+
 	if (userId && !user) {
-		console.info('something weird happened')
-		// something weird happened... The user is authenticated but we can't find
-		// them in the database. Maybe they were deleted? Let's log them out.
+		console.info('user not found', { userId })
 		await logout({ request, redirectTo: '/' })
+		return redirect('/')
 	}
-	const { toast, headers: toastHeaders } = await getToast(request)
+
+	const toast = await getToast(request)
 	const honeyProps = honeypot.getInputProps()
+	const { theme } = await getTheme(request)
+	const env = getEnv()
 
 	return json(
 		{
@@ -129,17 +144,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
 				origin: getDomainUrl(request),
 				path: new URL(request.url).pathname,
 				userPrefs: {
-					theme: getTheme(request),
+					theme,
 				},
 			},
-			ENV: getEnv(),
+			ENV: env,
+			theme,
 			toast,
 			honeyProps,
 		},
 		{
 			headers: combineHeaders(
-				{ 'Server-Timing': timings.toString() },
-				toastHeaders,
+				toast?.headers,
+				{
+					'Server-Timing': timings.toString(),
+				},
 			),
 		},
 	)
@@ -147,8 +165,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export const headers: HeadersFunction = ({ loaderHeaders }) => {
 	const headers = {
-		'Server-Timing': loaderHeaders.get('Server-Timing') ?? '',
+		'Content-Security-Policy': 
+			"default-src 'self'; " +
+			"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; " +
+			"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
+			"img-src 'self' data: https:; " +
+			"font-src 'self' data: https:; " +
+			"connect-src 'self' https://api.openai.com https://cdn.jsdelivr.net",
+		'X-Frame-Options': 'SAMEORIGIN',
+		'X-XSS-Protection': '1; mode=block',
+		'X-Content-Type-Options': 'nosniff',
 	}
+
 	return headers
 }
 
@@ -191,61 +219,112 @@ function Document({
 	)
 }
 
-export function Layout({ children }: { children: React.ReactNode }) {
-	// if there was an error running the loader, data could be missing
-	const data = useLoaderData<typeof loader | null>()
-	const nonce = useNonce()
-	const theme = useOptionalTheme()
+function Layout({ children }: { children: React.ReactNode }) {
+	const data = useLoaderData<typeof loader>()
+	const theme = useTheme()
+	const user = useOptionalUser()
 	return (
-		<Document nonce={nonce} theme={theme} env={data?.ENV}>
-			{children}
-		</Document>
+		<div className="flex h-full flex-col justify-between">
+			<header className="container py-6">
+				<nav className="flex items-center justify-between">
+					<Logo />
+					<div className="flex items-center gap-10">
+						{user ? (
+							<UserDropdown />
+						) : (
+							<Button asChild variant="default">
+								<Link to="/login">Log In</Link>
+							</Button>
+						)}
+						<ThemeSwitch />
+					</div>
+				</nav>
+			</header>
+
+			<div className="flex-1">
+				<Outlet />
+			</div>
+
+			<div className="container flex justify-between pb-5">
+				<Link to="/">
+					<div className="flex flex-row gap-2">
+						<Icon name="brain-circuit" />
+						<p className="text-sm">DeepSkill</p>
+					</div>
+				</Link>
+			</div>
+		</div>
 	)
 }
 
 function App() {
 	const data = useLoaderData<typeof loader>()
+	const nonce = useNonce()
 	const user = useOptionalUser()
 	const theme = useTheme()
 	const matches = useMatches()
-	const isOnSearchPage = matches.find((m) => m.id === 'routes/users+/index')
-	const searchBar = isOnSearchPage ? null : <SearchBar status="idle" />
+	const isOnSearchPage = matches.find(m => m.id === 'routes/users+/index')
+	const searchInputRef = useRef<HTMLInputElement>(null)
+	const submit = useSubmit()
+
 	useToast(data.toast)
 
+	useEffect(() => {
+		const keyboardShortcuts = (event: KeyboardEvent) => {
+			if (event.key === 'k' && (event.metaKey || event.ctrlKey)) {
+				event.preventDefault()
+				if (isOnSearchPage) {
+					searchInputRef.current?.focus()
+				} else {
+					submit(null, { action: '/users', method: 'GET' })
+				}
+			}
+		}
+		document.addEventListener('keydown', keyboardShortcuts)
+		return () => {
+			document.removeEventListener('keydown', keyboardShortcuts)
+		}
+	}, [isOnSearchPage, submit])
+
 	return (
-		<>
-			<div className="flex h-screen flex-col justify-between">
-				<header className="container py-6">
-					<nav className="flex flex-wrap items-center justify-between gap-4 sm:flex-nowrap md:gap-8">
-						<Logo />
-						<div className="ml-auto hidden max-w-sm flex-1 sm:block">
-							{searchBar}
-						</div>
-						<div className="flex items-center gap-10">
-							{user ? (
-								<UserDropdown />
-							) : (
-								<Button asChild variant="default" size="lg">
-									<Link to="/login">Log In</Link>
-								</Button>
-							)}
-						</div>
-						<div className="block w-full sm:hidden">{searchBar}</div>
-					</nav>
-				</header>
-
-				<div className="flex-1">
-					<Outlet />
+		<Document nonce={nonce} theme={theme} env={data.ENV}>
+			<ToastProvider>
+				<div className="flex h-screen flex-col">
+					<div className="flex-1">
+						<Layout>
+							<Outlet />
+						</Layout>
+					</div>
+					<EpicToaster closeButton position="top-center" theme={theme} />
+					<EpicProgress />
 				</div>
+			</ToastProvider>
+		</Document>
+	)
+}
 
-				<div className="container flex justify-between pb-5">
-					<Logo />
-					<ThemeSwitch userPreference={data.requestInfo.userPrefs.theme} />
-				</div>
+function AppWithProviders() {
+	const data = useLoaderData<typeof loader>()
+	return (
+		<HoneypotProvider {...data.honeyProps}>
+			<App />
+		</HoneypotProvider>
+	)
+}
+
+export default withSentry(AppWithProviders)
+
+export function ErrorBoundary() {
+	const nonce = useNonce()
+	const maybeRequestInfo = useOptionalRequestInfo()
+	const theme = maybeRequestInfo?.userPrefs.theme ?? 'light'
+
+	return (
+		<Document nonce={nonce} theme={theme}>
+			<div className="flex-1">
+				<GeneralErrorBoundary />
 			</div>
-			<EpicToaster closeButton position="top-center" theme={theme} />
-			<EpicProgress />
-		</>
+		</Document>
 	)
 }
 
@@ -261,17 +340,6 @@ function Logo() {
 		</Link>
 	)
 }
-
-function AppWithProviders() {
-	const data = useLoaderData<typeof loader>()
-	return (
-		<HoneypotProvider {...data.honeyProps}>
-			<App />
-		</HoneypotProvider>
-	)
-}
-
-export default withSentry(AppWithProviders)
 
 function UserDropdown() {
 	const user = useUser()
@@ -333,7 +401,3 @@ function UserDropdown() {
 		</DropdownMenu>
 	)
 }
-
-// this is a last resort error boundary. There's not much useful information we
-// can offer at this level.
-export const ErrorBoundary = GeneralErrorBoundary

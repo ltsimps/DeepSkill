@@ -1,6 +1,8 @@
 import { Button } from '../../components/ui/button';
 import { IntroAnimation } from './IntroAnimation';
 import { useState } from 'react';
+import { useNavigate } from '@remix-run/react';
+import { LANGUAGES } from '../../constants/languages';
 
 interface PracticeDashboardProps {
   onStart: () => void;
@@ -14,30 +16,12 @@ interface PracticeDashboardProps {
   };
 }
 
-const languageInfo = {
-  javascript: {
-    icon: '⚡',
-    name: 'JavaScript',
-    description: 'Perfect for web development',
-    difficulty: 'Beginner Friendly'
-  },
-  python: {
-    icon: '🐍',
-    name: 'Python',
-    description: 'Great for data science & automation',
-    difficulty: 'Beginner Friendly'
-  },
-  java: {
-    icon: '☕',
-    name: 'Java',
-    description: 'Ideal for enterprise applications',
-    difficulty: 'Intermediate'
-  }
-};
-
 export function PracticeDashboard({ onStart, onLanguageChange, selectedLanguage, stats }: PracticeDashboardProps) {
   const [mode, setMode] = useState<'casual' | 'timed' | 'challenge'>('casual');
   const [difficulty, setDifficulty] = useState<'beginner' | 'intermediate' | 'advanced'>('beginner');
+  const navigate = useNavigate();
+
+  const supportedLanguages = LANGUAGES.filter(l => l.supported);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
@@ -79,21 +63,22 @@ export function PracticeDashboard({ onStart, onLanguageChange, selectedLanguage,
           <div className="bg-gray-800/50 rounded-lg p-6 backdrop-blur-sm border border-gray-700">
             <h3 className="text-lg font-semibold mb-4 text-white">Choose Language</h3>
             <div className="space-y-3">
-              {Object.entries(languageInfo).map(([key, info]) => (
+              {supportedLanguages.map((lang) => (
                 <button
-                  key={key}
-                  onClick={() => onLanguageChange(key)}
+                  key={lang.id}
+                  onClick={() => onLanguageChange(lang.id)}
                   className={`w-full text-left p-3 rounded-lg transition-all ${
-                    selectedLanguage === key
+                    selectedLanguage === lang.id
                       ? 'bg-blue-500/20 border border-blue-500/40'
                       : 'bg-gray-700/30 border border-gray-700 hover:bg-gray-700/50'
                   }`}
                 >
                   <div className="flex items-center">
-                    <span className="text-2xl mr-3">{info.icon}</span>
+                    <span className="text-2xl mr-3">{lang.icon}</span>
                     <div>
-                      <div className="font-medium text-white">{info.name}</div>
-                      <div className="text-sm text-gray-400">{info.description}</div>
+                      <div className="font-medium text-white">{lang.name}</div>
+                      <div className="text-sm text-gray-400">{lang.description}</div>
+                      <div className="text-xs text-gray-500 mt-1">{lang.difficulty}</div>
                     </div>
                   </div>
                 </button>
@@ -157,16 +142,12 @@ export function PracticeDashboard({ onStart, onLanguageChange, selectedLanguage,
 
         {/* Start Button */}
         <div className="text-center">
-          <Button
+          <button
             onClick={onStart}
-            size="lg"
-            className="bg-gradient-to-r from-blue-500 to-purple-500 text-white px-12 py-6 text-xl font-semibold hover:opacity-90 transition-all hover:scale-105 animate-pulse"
+            className="px-8 py-4 bg-blue-500 text-white rounded-lg text-lg font-medium hover:bg-blue-600 transition-colors"
           >
-            Begin Practice
-          </Button>
-          <p className="mt-3 text-sm text-gray-400">
-            Estimated completion time: 15-20 minutes
-          </p>
+            Start Practice Session
+          </button>
         </div>
       </div>
     </div>

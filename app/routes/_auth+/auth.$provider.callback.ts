@@ -174,6 +174,13 @@ async function makeSession(
 	responseInit?: ResponseInit,
 ) {
 	redirectTo ??= '/'
+
+	// First, delete any existing session for this user
+	await prisma.session.deleteMany({
+		where: { userId },
+	})
+
+	// Then create the new session
 	const session = await prisma.session.create({
 		select: { id: true, expirationDate: true, userId: true },
 		data: {
@@ -181,6 +188,7 @@ async function makeSession(
 			userId,
 		},
 	})
+
 	return handleNewSession(
 		{ request, session, redirectTo, remember: true },
 		{ headers: combineHeaders(responseInit?.headers, destroyRedirectTo) },

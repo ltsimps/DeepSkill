@@ -49,13 +49,17 @@ export async function action({ request }: ActionFunctionArgs) {
 			LoginFormSchema.transform(async (data, ctx) => {
 				if (intent !== null) return { ...data, session: null }
 
-				const session = await login(data)
+				const session = await login({
+					username: data.username,
+					password: data.password,
+				})
+
 				if (!session) {
 					ctx.addIssue({
-						code: z.ZodIssueCode.custom,
+						code: 'custom',
 						message: 'Invalid username or password',
 					})
-					return z.NEVER
+					return { ...data, session: null }
 				}
 
 				return { ...data, session }
@@ -65,7 +69,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
 	if (submission.status !== 'success' || !submission.value.session) {
 		return json(
-			{ result: submission.reply({ hideFields: ['password'] }) },
+			{ submission } as const,
 			{ status: submission.status === 'error' ? 400 : 200 },
 		)
 	}
@@ -76,7 +80,7 @@ export async function action({ request }: ActionFunctionArgs) {
 		request,
 		session,
 		remember: remember ?? false,
-		redirectTo,
+		redirectTo: redirectTo ?? '/dashboard',
 	})
 }
 
@@ -90,7 +94,7 @@ export default function LoginPage() {
 		id: 'login-form',
 		constraint: getZodConstraint(LoginFormSchema),
 		defaultValue: { redirectTo },
-		lastResult: actionData?.result,
+		lastResult: actionData?.submission,
 		onValidate({ formData }) {
 			return parseWithZod(formData, { schema: LoginFormSchema })
 		},

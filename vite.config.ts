@@ -4,6 +4,7 @@ import { glob } from 'glob'
 import { flatRoutes } from 'remix-flat-routes'
 import { defineConfig } from 'vite'
 import { envOnlyMacros } from 'vite-env-only'
+import path from 'path'
 
 const MODE = process.env.NODE_ENV
 
@@ -31,6 +32,11 @@ export default defineConfig({
 		watch: {
 			ignored: ['**/playwright-report/**'],
 		},
+	},
+	resolve: {
+		alias: {
+			'~': path.resolve(__dirname, './app')
+		}
 	},
 	plugins: [
 		envOnlyMacros(),
@@ -88,13 +94,10 @@ export default defineConfig({
 			: null,
 	],
 	test: {
-		include: ['./app/**/*.test.{ts,tsx}'],
-		setupFiles: ['./tests/setup/setup-test-env.ts'],
-		globalSetup: ['./tests/setup/global-setup.ts'],
-		restoreMocks: true,
-		coverage: {
-			include: ['app/**/*.{ts,tsx}'],
-			all: true,
-		},
+		globals: true,
+		environment: 'jsdom',
+		setupFiles: ['./test/setup-test-env.ts'],
+		include: ['./app/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
+		watchExclude: ['.*\\/node_modules\\/.*', '.*\\/build\\/.*'],
 	},
 })

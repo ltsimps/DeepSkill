@@ -680,3 +680,196 @@ findPath(grid, [0, 0], [2, 3]);`,
     tags: ['strings', 'sliding-window'],
   }),
 ];
+
+// Python Problems - Beginner
+export const pythonBeginnerProblems = [
+  createScenarioProblem({
+    title: "Even or Odd",
+    difficulty: "beginner",
+    language: "python",
+    description: "Write a program to determine whether a number is even or odd",
+    problem: "Write a program that asks the user to input an integer. The program should then output whether the number is 'Even' or 'Odd'.",
+    startingCode: `def check_even_odd(num):
+    # Your code here
+    pass
+
+# Test the function
+if __name__ == "__main__":
+    num = int(input("Enter a number: "))
+    result = check_even_odd(num)
+    print(result)`,
+    solution: `def check_even_odd(num):
+    if num % 2 == 0:
+        return "Even"
+    else:
+        return "Odd"
+
+# Test the function
+if __name__ == "__main__":
+    num = int(input("Enter a number: "))
+    result = check_even_odd(num)
+    print(result)`,
+    testCases: [
+      "Input: 4, Output: Even",
+      "Input: 7, Output: Odd",
+      "Input: 0, Output: Even"
+    ],
+    hints: [
+      "Use the modulus operator (%) to find the remainder when divided by 2",
+      "Even numbers have a remainder of 0 when divided by 2",
+      "Odd numbers have a remainder of 1 when divided by 2"
+    ],
+    tags: ["basic", "math", "conditionals"],
+    baseComplexity: 0.5
+  }),
+  createScenarioProblem({
+    title: "List Sum",
+    difficulty: "beginner",
+    language: "python",
+    description: "Calculate the sum of numbers in a list",
+    problem: "Write a function that takes a list of numbers and returns their sum.",
+    startingCode: `def list_sum(numbers):
+    # Your code here
+    pass
+
+# Test the function
+if __name__ == "__main__":
+    numbers = [1, 2, 3, 4, 5]
+    result = list_sum(numbers)
+    print(f"Sum: {result}")`,
+    solution: `def list_sum(numbers):
+    return sum(numbers)
+
+# Test the function
+if __name__ == "__main__":
+    numbers = [1, 2, 3, 4, 5]
+    result = list_sum(numbers)
+    print(f"Sum: {result}")`,
+    testCases: [
+      "Input: [1, 2, 3, 4, 5], Output: 15",
+      "Input: [-1, -2, 3, 4], Output: 4",
+      "Input: [], Output: 0"
+    ],
+    hints: [
+      "Python has a built-in sum() function",
+      "You can also use a for loop to add numbers",
+      "Initialize a variable to store the sum"
+    ],
+    tags: ["lists", "loops", "basic"],
+    baseComplexity: 0.6
+  })
+];
+
+// C++ Problems - Beginner
+export const cppBeginnerProblems = [
+  createScenarioProblem({
+    title: "Even or Odd",
+    difficulty: "beginner",
+    language: "cpp",
+    description: "Write a program to determine whether a number is even or odd",
+    problem: "Write a program that asks the user to input an integer. The program should then output whether the number is 'Even' or 'Odd'.",
+    startingCode: `#include <iostream>
+using namespace std;
+
+string checkEvenOdd(int num) {
+    // Your code here
+    return "";
+}
+
+int main() {
+    int num;
+    cout << "Enter a number: ";
+    cin >> num;
+    cout << checkEvenOdd(num) << endl;
+    return 0;
+}`,
+    solution: `#include <iostream>
+using namespace std;
+
+string checkEvenOdd(int num) {
+    if (num % 2 == 0)
+        return "Even";
+    else
+        return "Odd";
+}
+
+int main() {
+    int num;
+    cout << "Enter a number: ";
+    cin >> num;
+    cout << checkEvenOdd(num) << endl;
+    return 0;
+}`,
+    testCases: [
+      "Input: 4, Output: Even",
+      "Input: 7, Output: Odd",
+      "Input: 0, Output: Even"
+    ],
+    hints: [
+      "Use the modulus operator (%) to find the remainder when divided by 2",
+      "Even numbers have a remainder of 0 when divided by 2",
+      "Odd numbers have a remainder of 1 when divided by 2"
+    ],
+    tags: ["basic", "math", "conditionals"],
+    baseComplexity: 0.5
+  }),
+  createScenarioProblem({
+    title: "Array Sum",
+    difficulty: "beginner",
+    language: "cpp",
+    description: "Calculate the sum of numbers in an array",
+    problem: "Write a function that takes an array of integers and its size, then returns the sum of all elements.",
+    startingCode: `#include <iostream>
+using namespace std;
+
+int arraySum(int arr[], int size) {
+    // Your code here
+    return 0;
+}
+
+int main() {
+    int arr[] = {1, 2, 3, 4, 5};
+    int size = sizeof(arr) / sizeof(arr[0]);
+    cout << "Sum: " << arraySum(arr, size) << endl;
+    return 0;
+}`,
+    solution: `#include <iostream>
+using namespace std;
+
+int arraySum(int arr[], int size) {
+    int sum = 0;
+    for(int i = 0; i < size; i++) {
+        sum += arr[i];
+    }
+    return sum;
+}
+
+int main() {
+    int arr[] = {1, 2, 3, 4, 5};
+    int size = sizeof(arr) / sizeof(arr[0]);
+    cout << "Sum: " << arraySum(arr, size) << endl;
+    return 0;
+}`,
+    testCases: [
+      "Input: [1, 2, 3, 4, 5], Output: 15",
+      "Input: [-1, -2, 3, 4], Output: 4",
+      "Input: [], Output: 0"
+    ],
+    hints: [
+      "Use a for loop to iterate through the array",
+      "Initialize a sum variable to 0",
+      "Add each element to the sum variable"
+    ],
+    tags: ["arrays", "loops", "basic"],
+    baseComplexity: 0.6
+  })
+];
+
+// Export all problems
+export const allProblems = [
+  ...easyProblems,
+  ...mediumProblems,
+  ...hardProblems,
+  ...pythonBeginnerProblems,
+  ...cppBeginnerProblems
+];

@@ -5,9 +5,10 @@ import { Authenticator } from 'remix-auth'
 import { safeRedirect } from 'remix-utils/safe-redirect'
 import { connectionSessionStorage, providers } from './connections.server.ts'
 import { prisma } from './db.server.ts'
-import { combineHeaders, downloadFile } from './misc.tsx'
+import { downloadFile } from './misc.tsx'
 import { type ProviderUser } from './providers/provider.ts'
 import { authSessionStorage } from './session.server.ts'
+import { ensureRoles, assignUserRole } from '../services/roles.server'
 
 export const SESSION_EXPIRATION_TIME = 1000 * 60 * 60 * 24 * 30
 export const getSessionExpirationDate = () =>
@@ -160,21 +161,31 @@ export async function signupWithConnection({
 	providerName: Connection['providerName']
 	imageUrl?: string
 }) {
+	// First create the user
+	const user = await prisma.user.create({
+		data: {
+			email: email.toLowerCase(),
+			username: username.toLowerCase(),
+			name,
+			connections: {
+				create: { providerId, providerName }
+			},
+			image: imageUrl
+				? { create: await downloadFile(imageUrl) }
+				: undefined,
+		},
+		select: { id: true },
+	})
+
+	// Ensure roles exist and assign default role
+	await ensureRoles()
+	await assignUserRole(user.id)
+
+	// Create session for the new user
 	const session = await prisma.session.create({
 		data: {
 			expirationDate: getSessionExpirationDate(),
-			user: {
-				create: {
-					email: email.toLowerCase(),
-					username: username.toLowerCase(),
-					name,
-					roles: { connect: { name: 'user' } },
-					connections: { create: { providerId, providerName } },
-					image: imageUrl
-						? { create: await downloadFile(imageUrl) }
-						: undefined,
-				},
-			},
+			userId: user.id,
 		},
 		select: { id: true, expirationDate: true },
 	})
@@ -182,33 +193,56 @@ export async function signupWithConnection({
 	return session
 }
 
-export async function logout(
-	{
-		request,
-		redirectTo = '/',
-	}: {
-		request: Request
-		redirectTo?: string
-	},
-	responseInit?: ResponseInit,
+export function combineHeaders(
+	...headers: Array<ResponseInit['headers'] | null | undefined>
 ) {
+	const combined = new Headers()
+	for (const header of headers) {
+		if (!header) continue
+		const source = header instanceof Headers ? header : new Headers(header)
+		for (const [key, value] of source.entries()) {
+			combined.append(key, value)
+		}
+	}
+	return combined
+}
+
+export function combineResponseInits(
+	...responseInits: Array<ResponseInit | undefined>
+): ResponseInit {
+	const combined: ResponseInit = {}
+	for (const responseInit of responseInits) {
+		if (!responseInit) continue
+		if (responseInit.headers) {
+			combined.headers = combineHeaders(combined.headers, responseInit.headers)
+		}
+		if (responseInit.status) {
+			combined.status = responseInit.status
+		}
+		if (responseInit.statusText) {
+			combined.statusText = responseInit.statusText
+		}
+	}
+	return combined
+}
+
+export async function logout(request: Request | { request: Request }, redirectTo = '/login') {
 	const authSession = await authSessionStorage.getSession(
-		request.headers.get('cookie'),
+		request instanceof Request
+			? request.headers.get('cookie')
+			: request.request.headers.get('cookie'),
 	)
 	const sessionId = authSession.get(sessionKey)
-	// if this fails, we still need to delete the session from the user's browser
-	// and it doesn't do any harm staying in the db anyway.
+	
+	// Delete the session from the database if it exists
 	if (sessionId) {
-		// the .catch is important because that's what triggers the query.
-		// learn more about PrismaPromise: https://www.prisma.io/docs/orm/reference/prisma-client-reference#prismapromise-behavior
-		void prisma.session.deleteMany({ where: { id: sessionId } }).catch(() => {})
+		await prisma.session.delete({ where: { id: sessionId } }).catch(() => {})
 	}
-	throw redirect(safeRedirect(redirectTo), {
-		...responseInit,
-		headers: combineHeaders(
-			{ 'set-cookie': await authSessionStorage.destroySession(authSession) },
-			responseInit?.headers,
-		),
+	
+	throw redirect(redirectTo, {
+		headers: {
+			'set-cookie': await authSessionStorage.destroySession(authSession),
+		},
 	})
 }
 

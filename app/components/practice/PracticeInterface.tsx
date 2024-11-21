@@ -32,6 +32,20 @@ export function PracticeInterface({ problem, onSubmit, feedback }: PracticeInter
             <span className="px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full text-sm">
               {problem.type}
             </span>
+            {feedback && (
+              <div className={`px-3 py-1 rounded-full text-sm ${
+                feedback.isCorrect ? 'bg-green-500/20 text-green-400' :
+                feedback.isCorrect === false ? 'bg-red-500/20 text-red-400' :
+                'bg-gray-500/20 text-gray-400'
+              }`}>
+                {feedback.points > 0 && (
+                  <span className="font-bold">+{feedback.points}XP</span>
+                )}
+                {feedback.points < 0 && (
+                  <span className="font-bold">{feedback.points}XP</span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

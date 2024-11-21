@@ -1,14 +1,17 @@
+export type ProgrammingLanguage = 'javascript' | 'python' | 'typescript' | 'java' | 'cpp';
+
 export interface GeneratedProblem {
+  id: string;
   title: string;
+  description: string;
   difficulty: string;
-  language: string;
+  language: ProgrammingLanguage;
   problem: string;
   startingCode?: string;
   solution: string;
-  hints?: string[];
-  testCases?: string[];
+  hints: string; // JSON string of hints array
+  testCases: string; // JSON string of test cases array
   type?: string;
-  id: string;
 }
 
 export interface ProblemProgression {
@@ -32,11 +35,13 @@ export interface ProblemProgression {
 
 export interface LoaderData {
   stats: {
-    totalAttempts: number;
-    problemsSolved: number;
-    averageTime: number;
-    streaks: number;
+    level: number;
+    streak: number;
+    totalXp: number;
+    lastPractice: Date | null;
+    preferredLanguage: ProgrammingLanguage;
   };
+  activeSession: any;
 }
 
 export interface FetcherData {
@@ -48,8 +53,6 @@ export interface FetcherData {
   xpGained?: number;
   nextProblem?: GeneratedProblem | null;
   dailyLimitReached?: boolean;
-  error?: string;
-  message?: string;
 }
 
 export interface ProblemFeedback {

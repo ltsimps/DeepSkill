@@ -45,7 +45,7 @@ export function ThemeSwitch({
 	userPreference?: Theme | null
 }) {
 	const fetcher = useFetcher<typeof action>()
-	const requestInfo = useRequestInfo()
+	const requestInfo = useOptionalRequestInfo()
 
 	const [form] = useForm({
 		id: 'theme-switch',
@@ -81,9 +81,9 @@ export function ThemeSwitch({
 			action="/resources/theme-switch"
 		>
 			<ServerOnly>
-				{() => (
+				{() => requestInfo ? (
 					<input type="hidden" name="redirectTo" value={requestInfo.path} />
-				)}
+				) : null}
 			</ServerOnly>
 			<input type="hidden" name="theme" value={nextMode} />
 			<div className="flex gap-2">
@@ -124,21 +124,19 @@ export function useOptimisticThemeMode() {
  * has not set a preference.
  */
 export function useTheme() {
-	const hints = useHints()
 	const requestInfo = useRequestInfo()
 	const optimisticMode = useOptimisticThemeMode()
 	if (optimisticMode) {
-		return optimisticMode === 'system' ? hints.theme : optimisticMode
+		return optimisticMode === 'system' ? 'light' : optimisticMode
 	}
-	return requestInfo.userPrefs.theme ?? hints.theme
+	return requestInfo.userPrefs.theme ?? 'light'
 }
 
 export function useOptionalTheme() {
-	const optionalHints = useOptionalHints()
-	const optionalRequestInfo = useOptionalRequestInfo()
+	const requestInfo = useOptionalRequestInfo()
 	const optimisticMode = useOptimisticThemeMode()
 	if (optimisticMode) {
-		return optimisticMode === 'system' ? optionalHints?.theme : optimisticMode
+		return optimisticMode === 'system' ? 'light' : optimisticMode
 	}
-	return optionalRequestInfo?.userPrefs.theme ?? optionalHints?.theme
+	return requestInfo?.userPrefs.theme ?? 'light'
 }

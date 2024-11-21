@@ -1,106 +1,200 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+  extensions = [vector]
+}
+
 generator client {
   provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
-datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
-}
-model Session {
-  id             String   @id @default(cuid())
-  expirationDate DateTime
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  userId         String
-}
 model User {
-  id       String @id @default(cuid())
-  email    String @unique
-  username String @unique
-  name     String?
-  rating   Int    @default(1200)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  password    Password?
-  notes       Note[]
-  roles       Role[]     @relation("RoleToUser")
-  connections Connection[]
-  sessions    Session[]
-  image       UserImage?
-  problemProgressions ProblemProgression[]
+  id            String    @id @default(cuid())
+  email         String    @unique
+  username      String    @unique
+  name          String?
+  image         Image?    @relation(fields: [imageId], references: [id])
+  imageId       String?   @unique
+  rating        Int       @default(1000)
+  xp            Int       @default(0)
+  level         Int       @default(1)
+  streak        Int       @default(0)
+  lastPractice  DateTime?
+  preferredLanguage String @default("javascript")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  progressions  ProblemProgression[]
+  sessions      PracticeSession[]
+  achievements  UserAchievement[]
+  password      Password?
+  notes         Note[]
+  roles         Role[]     @relation("RoleToUser")
+  connections   Connection[]
+  session       Session?
 }
 
 model Password {
   hash String
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId String @unique
 }
 
-model Note {
-  id      String @id @default(cuid())
-  title   String
-  content String
-  images  NoteImage[]
+model Problem {
+  id            String    @id @default(cuid())
+  title         String
+  difficulty    String    @default("EASY")
+  type          String    @default("SCENARIO")
+  language      String    @default("JAVASCRIPT")
+  description   String    @default("")
+  problem       String    @default("")
+  startingCode  String    @default("")
+  solution      String    @default("")
+  testCases     String    @default("[]")
+  hints         String    @default("[]")
+  tags          String    @default("[]")
+  timeLimit     Int       @default(300)
+  baseComplexity Float    @default(1.0)
+  source        String    @default("USER")
+  status        String    @default("ACTIVE")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  embedding     Unsupported("vector(1536)")?
+  
+  progressions ProblemProgression[]
+  sessions    SessionProblem[]
+}
 
+model ProblemProgression {
+  id               String   @id @default(cuid())
+  userId           String
+  problemId        String
+  attempts         Int      @default(0)
+  timeSpent        Int      @default(0)
+  solved           Boolean?
+  consecutiveCorrect Int    @default(0)
+  lastSolution     String?
+  lastFeedback     String?
+  lastAttempt      DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  problem          Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  sessionProblems  SessionProblem[]
+
+  @@unique([userId, problemId])
+  @@index([userId])
+  @@index([problemId])
+}
+
+model PracticeSession {
+  id        String    @id @default(cuid())
+  userId    String
+  status    String    @default("ACTIVE") // ACTIVE, COMPLETED, EXPIRED
+  problems  SessionProblem[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model SessionProblem {
+  id        String    @id @default(cuid())
+  sessionId String
+  problemId String
+  order     Int
+  status    String    @default("PENDING") // PENDING, COMPLETED, FAILED
+  attempts  Int       @default(0)
+  session   PracticeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  problem   Problem   @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  progression ProblemProgression? @relation(fields: [problemId, userId], references: [problemId, userId])
+  userId    String
+
+  @@unique([sessionId, problemId])
+  @@index([sessionId])
+  @@index([problemId])
+  @@index([problemId, userId])
+}
+
+model Achievement {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String
+  icon        String
+  type        String
+  threshold   Int
+  xpReward    Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  users       UserAchievement[]
+}
+
+model UserAchievement {
+  id            String      @id @default(cuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime    @default(now())
+  
+  // Relations
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+}
+
+model Image {
+  id          String    @id @default(cuid())
+  contentType String
+  altText     String?
+  blob        Bytes
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User?
+  note        Note?     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  noteId      String?
+}
+
+model Note {
+  id        String   @id @default(cuid())
+  title     String
+  content   String
+  images    Image[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
 
-  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  ownerId String
-}
-
-model NoteImage {
-  id          String  @id @default(cuid())
-  altText     String?
-  contentType String
-  blob        Bytes
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  note        Note     @relation(fields: [noteId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  noteId      String
-}
-
-model UserImage {
-  id          String  @id @default(cuid())
-  altText     String?
-  contentType String
-  blob        Bytes
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  userId      String   @unique
+  @@index([userId])
 }
 
 model Role {
-  id          String @id @default(cuid())
-  name        String @unique
-  description String @default("")
+  id          String        @id @default(cuid())
+  name        String        @unique
+  users       User[]        @relation("RoleToUser")
+  permissions Permission[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  users       User[]       @relation("RoleToUser")
-  permissions Permission[] @relation("PermissionToRole")
 }
 
 model Permission {
-  id          String @id @default(cuid())
-  action      String
-  entity      String
-  access      String
-  description String @default("")
+  id        String   @id @default(cuid())
+  entity    String   // The entity this permission is for (e.g. "note", "user")
+  action    String   // The action allowed (e.g. "create", "read", "update", "delete")
+  access    String   // The access level (e.g. "own", "any")
+  roles     Role[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  roles Role[] @relation("PermissionToRole")
+  @@unique([entity, action, access])
 }
 
 model Connection {
@@ -111,93 +205,35 @@ model Connection {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId String
 
   @@unique([providerName, providerId])
 }
 
+model Session {
+  id             String    @id @default(cuid())
+  expirationDate DateTime
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String    @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
 model Verification {
-  id        String    @id @default(cuid())
-  createdAt DateTime  @default(now())
+  id        String   @id @default(cuid())
   type      String
   target    String
   secret    String
   algorithm String
   digits    Int
   period    Int
-  charSet   String
-  expiresAt DateTime?
-
-  @@unique([target, type])
-}
-
-model Problem {
-  id          String   @id @default(cuid())
-  type        String   // 'FILL_IN' or 'SCENARIO'
-  difficulty  String   // 'EASY', 'MEDIUM', or 'HARD'
-  language    String   // 'JAVASCRIPT', 'PYTHON', or 'TYPESCRIPT'
-  title       String
-  description String
-  source      String   // 'SEEDED' or 'GPT'
-  
-  // Learning metrics
-  baseComplexity    Float    @default(1.0)  // Initial complexity score
-  adaptiveDifficulty Float   @default(1.0)  // Adjusted based on user performance
-  successRate       Float    @default(0.0)  // % of successful attempts
-  averageTime       Float    @default(0.0)  // Average completion time
-  
-  // Usage tracking
-  lastUsed     DateTime?
-  dailyUseCount Int      @default(0)  // Track daily usage
-  totalUses     Int      @default(0)  // Total times problem has been used
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  // Common fields
-  hints       String   // Stored as JSON string
-  tags        String   // Stored as JSON string
-  timeLimit   Int      @default(300) // Time limit in seconds
-
-  // Fields for FILL_IN type
-  template        String?  // Code with markers for fill-in sections
-  fillInSections  String?  // JSON string of {id, start, end, solution}[]
-
-  // Fields for SCENARIO type
-  startingCode   String?
-  solution       String?
-  testCases      String?  // JSON string of test cases
-
-  // Relations
-  progressions     ProblemProgression[]
-}
-
-model ProblemProgression {
-  id               String   @id @default(cuid())
-  attempts         Int      @default(0)     // Number of attempts
-  solved           Boolean? // Whether problem was solved (null until analyzed)
-  lastAttempt      DateTime @default(now()) // Last attempt timestamp
-  userSolution     String?  // The user's submitted solution
-  
-  // Learning metrics
-  easeFactor       Float    @default(2.5)   // SM-2 inspired learning rate
-  interval         Int      @default(0)     // Days between reviews
-  consecutiveCorrect Int    @default(0)     // Streak of correct solutions
-  timeSpent        Float    @default(0.0)   // Total time spent on problem
-  
-  // RL state
-  stateVector      String?  // JSON string of current state
-  actionValue      Float    @default(0.0)   // Q-value for current state
-  rewardSignal     Float    @default(0.0)   // Last reward received
-  
-  // Relations
-  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    String
-  problem   Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
-  problemId String
-
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([userId, problemId])
+  @@unique([target, type])
+  @@index([type, target])
 }
