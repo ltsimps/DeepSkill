@@ -13,7 +13,8 @@ export interface TestCase {
   description: string
 }
 
-export type ProgrammingLanguage = 'javascript' | 'python' | 'cpp';
+export type ProgrammingLanguage = 'python';
+export const LANGUAGES = ['python'] as const;
 export type DifficultyLevel = 'EASY' | 'MEDIUM' | 'HARD';
 
 // Helper to create a FILL_IN type problem

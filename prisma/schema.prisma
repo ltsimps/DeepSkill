@@ -12,29 +12,142 @@ generator client {
   previewFeatures = ["postgresqlExtensions"]
 }
 
+// Core models
 model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  username         String    @unique
+  name             String?
+  image            Image?    @relation(fields: [imageId], references: [id])
+  imageId          String?   @unique
+  rating           Int       @default(1000)
+  xp               Int       @default(0)
+  level            Int       @default(1)
+  streak           Int       @default(0)
+  lastPractice     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  
+  // Learning preferences
+  domains          UserDomain[]
+  preferredLanguages String[]  @default(["javascript"])
+  
+  // Relations
+  progressions     ProblemProgression[]
+  sessions         PracticeSession[]
+  achievements     UserAchievement[]
+  password         Password?
+  notes            Note[]
+  roles            Role[]     @relation("RoleToUser")
+  connections      Connection[]
+  session          Session?
+}
+
+// Domain represents a field of study (e.g., "Programming", "Nursing", "Mathematics")
+model Domain {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String
+  icon        String?
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  topics      Topic[]
+  users       UserDomain[]
+  problems    Problem[]
+}
+
+// Topic represents a specific area within a domain (e.g., "Data Structures", "Pediatric Care", "Calculus")
+model Topic {
+  id          String   @id @default(cuid())
+  name        String
+  description String
+  icon        String?
+  status      String   @default("ACTIVE")
+  domainId    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  domain      Domain    @relation(fields: [domainId], references: [id])
+  problems    Problem[]
+
+  @@unique([domainId, name])
+}
+
+// UserDomain tracks user's progress and preferences in each domain
+model UserDomain {
+  id          String   @id @default(cuid())
+  userId      String
+  domainId    String
+  level       Int      @default(1)
+  xp          Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain      Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, domainId])
+}
+
+// Problem represents any type of practice problem
+model Problem {
   id            String    @id @default(cuid())
-  email         String    @unique
-  username      String    @unique
-  name          String?
-  image         Image?    @relation(fields: [imageId], references: [id])
-  imageId       String?   @unique
-  rating        Int       @default(1000)
-  xp            Int       @default(0)
-  level         Int       @default(1)
-  streak        Int       @default(0)
-  lastPractice  DateTime?
-  preferredLanguage String @default("javascript")
+  title         String
+  description   String
+  difficulty    String    @default("EASY")
+  type          String    // "CODE", "MCQ", "FREE_TEXT", etc.
+  domainId      String
+  topicId       String
+  
+  // Problem content
+  content       Json      // Flexible structure based on problem type
+  solution      Json      // Includes solution and explanation
+  templates     Json?     // Language/format specific templates
+  hints         Json      @default("[]")
+  testCases     Json?     // For code problems
+  
+  // Metadata
+  tags          String[]
+  timeLimit     Int       @default(300)
+  baseComplexity Float    @default(1.0)
+  source        String    @default("LLM")
+  status        String    @default("ACTIVE")
+  
+  // Vector embedding for similarity search
+  embedding     Unsupported("vector(1536)")?
+  
+  // LLM metadata
+  llmVersion    String?   // Version of LLM that generated/validated this
+  llmConfidence Float?    // LLM's confidence in problem quality
+  
+  // Timestamps
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  
+  // Relations
+  domain        Domain    @relation(fields: [domainId], references: [id])
+  topic         Topic     @relation(fields: [topicId], references: [id])
   progressions  ProblemProgression[]
-  sessions      PracticeSession[]
-  achievements  UserAchievement[]
-  password      Password?
-  notes         Note[]
-  roles         Role[]     @relation("RoleToUser")
-  connections   Connection[]
-  session       Session?
+  sessions      SessionProblem[]
+}
+
+// LLMCache stores responses from LLM to avoid redundant API calls
+model LLMCache {
+  id            String   @id @default(cuid())
+  prompt        String   // Hash of the prompt
+  response      Json     // Stored LLM response
+  model         String   // LLM model used
+  version       String   // Model version
+  usage         Int      @default(1)
+  lastUsed      DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@index([prompt])
 }
 
 model Password {
@@ -42,31 +155,6 @@ model Password {
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId String @unique
-}
-
-model Problem {
-  id            String    @id @default(cuid())
-  title         String
-  difficulty    String    @default("EASY")
-  type          String    @default("SCENARIO")
-  language      String    @default("JAVASCRIPT")
-  description   String    @default("")
-  problem       String    @default("")
-  startingCode  String    @default("")
-  solution      String    @default("")
-  testCases     String    @default("[]")
-  hints         String    @default("[]")
-  tags          String    @default("[]")
-  timeLimit     Int       @default(300)
-  baseComplexity Float    @default(1.0)
-  source        String    @default("USER")
-  status        String    @default("ACTIVE")
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  embedding     Unsupported("vector(1536)")?
-  
-  progressions ProblemProgression[]
-  sessions    SessionProblem[]
 }
 
 model ProblemProgression {
@@ -236,4 +324,39 @@ model Verification {
 
   @@unique([target, type])
   @@index([type, target])
+}
+
+model Assessment {
+  id            String    @id @default(cuid())
+  userId        String
+  domainId      String
+  questions     Json      // LLM generated questions
+  responses     Json      // User's responses
+  skillAnalysis Json      // LLM analysis of skills
+  status        String    @default("IN_PROGRESS") // IN_PROGRESS, COMPLETED
+  createdAt     DateTime  @default(now())
+  completedAt   DateTime?
+  
+  user          User      @relation(fields: [userId], references: [id])
+  domain        Domain    @relation(fields: [domainId], references: [id])
+  learningPath  LearningPath?
+
+  @@index([userId])
+  @@index([domainId])
+}
+
+model LearningPath {
+  id            String    @id @default(cuid())
+  userId        String
+  assessmentId  String    @unique
+  concepts      Json      // Ordered list of concepts to learn
+  progress      Float     @default(0)
+  currentNode   String?   // Current concept ID
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  user          User      @relation(fields: [userId], references: [id])
+  assessment    Assessment @relation(fields: [assessmentId], references: [id])
+
+  @@index([userId])
 }

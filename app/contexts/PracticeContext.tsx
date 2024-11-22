@@ -70,7 +70,7 @@ const initialState: PracticeSessionState = {
   newAchievements: [],
   totalProblems: 0,
   remainingProblems: 0,
-  selectedLanguage: 'javascript'
+  selectedLanguage: 'python'
 };
 
 const MIN_PROBLEMS_REQUIRED = 3;

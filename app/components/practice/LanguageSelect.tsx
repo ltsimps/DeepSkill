@@ -1,17 +1,16 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
-import type { SupportedLanguage } from '~/routes/practice'
-import { SUPPORTED_LANGUAGES } from '~/routes/practice'
+import type { ProgrammingLanguage } from '~/types/practice'
+import { SUPPORTED_LANGUAGES } from '~/utils/language'
 
 interface LanguageSelectProps {
-  value: SupportedLanguage
-  onChange: (value: SupportedLanguage) => void
+  value: ProgrammingLanguage
+  onChange: (value: ProgrammingLanguage) => void
 }
 
 export function LanguageSelect({ value, onChange }: LanguageSelectProps) {
-  const languageLabels = {
-    python: '🐍 Python',
-    cpp: '⚡ C++',
-  }
+  const languageLabels: Record<ProgrammingLanguage, string> = {
+    python: '🐍 Python'
+  } as const
 
   return (
     <Select value={value} onValueChange={onChange}>

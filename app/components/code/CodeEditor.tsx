@@ -10,7 +10,7 @@ interface CodeEditorProps {
   readOnly?: boolean;
 }
 
-export function CodeEditor({ value, onChange, language = 'javascript', className = '', readOnly = false }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, language = 'python', className = '', readOnly = false }: CodeEditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 
   useEffect(() => {

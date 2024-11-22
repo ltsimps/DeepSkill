@@ -23,7 +23,7 @@ describe('PracticeProblem', () => {
       description: 'Test description',
       difficulty: 'EASY',
       hints: ['Hint 1', 'Example test case: input: [1,2,3], output: 6'],
-      language: 'javascript',
+      language: 'python',
       solution: '',
       testCases: [],
       startingCode: ''
@@ -84,14 +84,14 @@ describe('PracticeProblem', () => {
     expect(mockProps.onSkip).toHaveBeenCalled();
   });
 
-  it('uses correct programming language for code editor', () => {
+  it('uses Python as the programming language for code editor', () => {
     renderWithProvider(<PracticeProblem {...mockProps} />);
     
     const editor = screen.getByTestId('mock-editor');
-    expect(editor).toHaveAttribute('data-language', 'javascript');
+    expect(editor).toHaveAttribute('data-language', 'python');
   });
 
-  it('defaults to javascript when no language is specified', () => {
+  it('defaults to Python when no language is specified', () => {
     const stateWithoutLanguage = {
       ...mockState,
       currentProblem: { ...mockState.currentProblem, language: undefined }
@@ -104,6 +104,6 @@ describe('PracticeProblem', () => {
     );
     
     const editor = screen.getByTestId('mock-editor');
-    expect(editor).toHaveAttribute('data-language', 'javascript');
+    expect(editor).toHaveAttribute('data-language', 'python');
   });
 });

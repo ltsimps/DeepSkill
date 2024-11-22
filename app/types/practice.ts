@@ -1,4 +1,4 @@
-export type ProgrammingLanguage = 'javascript' | 'python' | 'typescript' | 'java' | 'cpp';
+export type ProgrammingLanguage = 'python';
 
 export interface GeneratedProblem {
   id: string;

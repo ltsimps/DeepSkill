@@ -29,6 +29,30 @@ export default {
             transform: 'rotate(-360deg)',
           },
         },
+        blob: {
+          '0%': {
+            transform: 'translate(0px, 0px) scale(1)',
+          },
+          '33%': {
+            transform: 'translate(30px, -50px) scale(1.1)',
+          },
+          '66%': {
+            transform: 'translate(-20px, 20px) scale(0.9)',
+          },
+          '100%': {
+            transform: 'translate(0px, 0px) scale(1)',
+          },
+        },
+        'fade-in': {
+          '0%': {
+            opacity: '0',
+            transform: 'translateY(10px)',
+          },
+          '100%': {
+            opacity: '1',
+            transform: 'translateY(0)',
+          },
+        },
         orbit: {
           '0%': { transform: 'translate(-50%, -50%) rotate(0deg) translateX(150px) rotate(0deg)' },
           '100%': { transform: 'translate(-50%, -50%) rotate(360deg) translateX(150px) rotate(-360deg)' }
@@ -70,14 +94,14 @@ export default {
       },
       animation: {
         'spin-slow': 'spin 3s linear infinite',
-        'spin-reverse': 'spin-reverse 4s linear infinite',
+        'spin-reverse': 'spin-reverse 1s linear infinite',
         'bounce-slow': 'bounce 3s infinite',
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'orbit': 'orbit 20s linear infinite',
-        'orbit-reverse': 'orbit 15s linear infinite reverse',
-        'orbit-slow': 'orbit 25s linear infinite',
-        twinkle: 'twinkle 3s ease-in-out infinite',
-        fall: 'fall 3s linear forwards',
+        'orbit-reverse': 'orbit-reverse 15s linear infinite reverse',
+        'orbit-slow': 'orbit-slow 25s linear infinite',
+        twinkle: 'twinkle 1s ease-in-out infinite',
+        fall: 'fall 10s linear infinite',
         orbit: 'orbit 8s linear infinite',
         'orbit-reverse': 'orbit-reverse 12s linear infinite',
         'orbit-slow': 'orbit-slow 15s linear infinite',
@@ -85,6 +109,8 @@ export default {
         'pulse-slow': 'pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         gradient: 'gradient 15s ease infinite',
         'pulse-subtle': 'pulse-subtle 2s ease-in-out infinite',
+        blob: 'blob 7s infinite',
+        'fade-in': 'fade-in 0.5s ease-out',
       },
     },
   },

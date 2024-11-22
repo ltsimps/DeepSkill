@@ -49,7 +49,7 @@ export function Problem({ problem, onSubmit, onSkip, isLoading = false }: Proble
         <CodeEditor
           value={solution}
           onChange={setSolution}
-          language={problem.language || 'javascript'}
+          language={problem.language}
           className="min-h-[300px]"
         />
       </div>

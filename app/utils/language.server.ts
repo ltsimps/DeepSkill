@@ -1,14 +1,18 @@
 import { prisma } from './db.server';
 
-export type ProgrammingLanguage = 'javascript' | 'python' | 'typescript' | 'java' | 'cpp';
+export type ProgrammingLanguage = 'python';
 
 export const LANGUAGES = [
-  { id: 'javascript', name: 'JavaScript', icon: '⚡', description: 'Modern web development' },
-  { id: 'python', name: 'Python', icon: '🐍', description: 'Data science & backend' },
-  { id: 'typescript', name: 'TypeScript', icon: '💪', description: 'Type-safe JavaScript' },
-  { id: 'java', name: 'Java', icon: '☕', description: 'Enterprise & Android' },
-  { id: 'cpp', name: 'C++', icon: '⚙️', description: 'Systems & game dev' }
+  { id: 'python', name: 'Python', icon: '🐍', description: 'Data science & backend' }
 ] as const;
+
+export function validateLanguage(language: string): language is ProgrammingLanguage {
+  return language === 'python';
+}
+
+export function getDefaultLanguage(): ProgrammingLanguage {
+  return 'python';
+}
 
 export async function updateUserPreferredLanguage(userId: string, language: ProgrammingLanguage) {
   if (!LANGUAGES.find(l => l.id === language)) {

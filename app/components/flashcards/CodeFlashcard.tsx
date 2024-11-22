@@ -1,5 +1,5 @@
-import { useState } from 'react'
 import Editor from '@monaco-editor/react'
+import { useState } from 'react'
 import { Button } from '../ui/button'
 
 interface CodeFlashcardProps {

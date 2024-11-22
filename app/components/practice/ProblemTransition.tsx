@@ -58,7 +58,7 @@ export function ProblemTransition({ problem, onSubmit, onSkip }: ProblemTransiti
             <CodeEditor
               value={solution}
               onChange={setSolution}
-              language={problem.language || 'javascript'}
+              language={problem.language}
               className="min-h-[300px]"
             />
           </div>

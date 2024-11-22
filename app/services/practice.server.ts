@@ -1,23 +1,39 @@
-import { prisma } from '../utils/db.server'
+import { prisma } from '../utils/db.server';
+import { DAILY_PROBLEM_LIMIT } from '../constants/practice';
+import { llmService } from './llm.server';
 
-const DAILY_PROBLEM_LIMIT = 20
-const DIFFICULTY_LEVELS = ['EASY', 'MEDIUM', 'HARD']
-const MIN_PRESEEDED_PER_DIFFICULTY = 10
+interface NextProblemOptions {
+  userId: string;
+  domainId?: string;
+  topicId?: string;
+  preferredLanguages?: string[];
+}
 
-interface ProblemMetrics {
-  successRate: number
-  averageTime: number
-  adaptiveDifficulty: number
+interface LearningMetrics {
+  correctness: number;
+  timeSpent: number;
+  attemptsCount: number;
+  lastReview: Date;
+  nextReview: Date;
+  easeFactor: number;
+  interval: number;
+}
+
+interface ReinforcementState {
+  skillLevel: number;
+  conceptMastery: Record<string, number>;
+  recentPerformance: number[];
+  explorationRate: number;
 }
 
 export class PracticeScheduler {
-  // Get the next problem for a user based on their performance
-  async getNextProblem(userId: string, language?: string | null) {
-    console.log('Getting next problem for user:', userId, 'language:', language);
+  // Get the next problem for a user based on their performance and domain
+  async getNextProblem({ userId, domainId, topicId, preferredLanguages }: NextProblemOptions) {
+    console.log('Getting next problem for user:', userId, 'domain:', domainId, 'topic:', topicId);
     
     // Check if user has reached daily limit
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     
     const attemptedToday = await prisma.problemProgression.count({
       where: {
@@ -26,145 +42,162 @@ export class PracticeScheduler {
           gte: today
         }
       }
-    })
+    });
 
     console.log('Attempts today:', attemptedToday);
 
     if (attemptedToday >= DAILY_PROBLEM_LIMIT) {
       console.log('Daily limit reached');
-      return { type: 'DAILY_LIMIT_REACHED' as const }
+      return { type: 'DAILY_LIMIT_REACHED' as const };
     }
+
+    // Get user's domain progress
+    const userDomain = domainId ? await prisma.userDomain.findUnique({
+      where: { userId_domainId: { userId, domainId } },
+      include: { domain: true }
+    }) : null;
 
     // Get user's average performance metrics
-    const userMetrics = await this.getUserMetrics(userId)
+    const userMetrics = await this.getUserMetrics(userId, domainId);
     
     // Select appropriate difficulty level
-    const targetDifficulty = this.selectDifficulty(userMetrics)
+    const targetDifficulty = this.selectDifficulty(userMetrics);
     console.log('Selected difficulty:', targetDifficulty);
-    
-    // First try to get a preseeded problem
-    console.log('Searching for preseeded problem...');
-    
-    // Check total problems in database
-    const totalProblems = await prisma.problem.count({
-      where: {
-        language: language || 'javascript'
-      }
-    });
-    console.log('Total problems in database for language', language || 'javascript', ':', totalProblems);
-    
-    // If no problems exist at all for this language, we need to generate one
-    if (totalProblems === 0) {
-      console.log('No problems found for language', language || 'javascript', ', need to generate');
-      return { type: 'NEED_PRESEEDING' as const, difficulty: targetDifficulty, language: language || 'javascript' }
-    }
-    
-    const problem = await prisma.problem.findFirst({
-      where: {
-        difficulty: targetDifficulty,
-        source: 'SEEDED',
-        language: language || 'javascript',
-        dailyUseCount: { lt: 3 }, // Limit daily uses per problem
-        NOT: {
-          progressions: {
-            some: {
-              userId,
-              lastAttempt: { gte: today }
-            }
+
+    // Build base query
+    const baseQuery = {
+      difficulty: targetDifficulty,
+      ...(domainId && { domainId }),
+      ...(topicId && { topicId }),
+      NOT: {
+        progressions: {
+          some: {
+            userId,
+            lastAttempt: { gte: today }
           }
         }
-      },
-      orderBy: {
-        lastUsed: 'asc' // Prefer less recently used problems
       }
-    })
+    };
+
+    // If this is a programming domain, add language filter
+    if (userDomain?.domain.name === 'Programming' && preferredLanguages?.length) {
+      baseQuery['content'] = {
+        path: ['language'],
+        in: preferredLanguages
+      };
+    }
+    
+    // Try to find a problem using vector similarity
+    const lastProblem = await prisma.problemProgression.findFirst({
+      where: { userId },
+      orderBy: { lastAttempt: 'desc' },
+      include: { problem: true }
+    });
+
+    let problem = null;
+    if (lastProblem?.problem.embedding) {
+      // Find similar problem using vector similarity
+      problem = await prisma.$queryRaw`
+        SELECT p.*, (p.embedding <=> ${lastProblem.problem.embedding}::vector) as similarity
+        FROM Problem p
+        WHERE p.id != ${lastProblem.problem.id}
+        AND p.difficulty = ${targetDifficulty}
+        ${domainId ? prisma.sql`AND p.domainId = ${domainId}` : prisma.sql``}
+        ${topicId ? prisma.sql`AND p.topicId = ${topicId}` : prisma.sql``}
+        ORDER BY similarity ASC
+        LIMIT 1
+      `;
+    }
+
+    // If no similar problem found, try regular query
+    if (!problem) {
+      // Get reinforcement learning state
+      const rlState = await this.getUserReinforcementState(userId, domainId);
+
+      // Get problems using existing query
+      let problems = await prisma.problem.findMany({
+        where: baseQuery,
+        orderBy: [
+          { lastUsed: 'asc' },
+          { totalUses: 'asc' }
+        ],
+        take: 10
+      });
+
+      // Use RL to select the best problem
+      const selectedProblem = this.selectProblemRL(problems, rlState);
+
+      if (!selectedProblem) {
+        return null;
+      }
+
+      // Update problem selection metrics
+      await prisma.problem.update({
+        where: { id: selectedProblem.id },
+        data: {
+          lastUsed: new Date(),
+          totalUses: { increment: 1 }
+        }
+      });
+
+      problem = selectedProblem;
+    }
 
     if (problem) {
-      console.log('Found preseeded problem:', problem.id);
+      console.log('Found problem:', problem.id);
       // Update usage metrics
       await prisma.problem.update({
         where: { id: problem.id },
         data: {
           lastUsed: new Date(),
-          dailyUseCount: { increment: 1 },
           totalUses: { increment: 1 }
         }
-      })
+      });
       
-      return { type: 'PROBLEM_FOUND' as const, problem }
+      return { type: 'PROBLEM_FOUND' as const, problem };
     }
 
-    console.log('No preseeded problem found, checking counts...');
+    // If no problem found, generate one with LLM
+    console.log('No problem found, generating with LLM');
     
-    // If no preseeded problem found, check if we need to generate more
-    const preseededCount = await prisma.problem.count({
-      where: {
-        difficulty: targetDifficulty,
-        source: 'SEEDED',
-        language: language || 'javascript'
-      }
-    })
-
-    console.log('Preseeded problems for difficulty', targetDifficulty, ':', preseededCount);
-
-    if (preseededCount < MIN_PRESEEDED_PER_DIFFICULTY) {
-      console.log('Need more preseeded problems');
-      return { type: 'NEED_PRESEEDING' as const, difficulty: targetDifficulty, language: language || 'javascript' }
+    // Get domain and topic info
+    const domain = await prisma.domain.findUnique({ where: { id: domainId } });
+    const topic = await prisma.topic.findUnique({ where: { id: topicId } });
+    
+    if (!domain || !topic) {
+      throw new Error('Domain or topic not found');
     }
 
-    // As a fallback, get any available problem
-    const fallbackProblem = await prisma.problem.findFirst({
-      where: {
-        difficulty: targetDifficulty,
-        language: language || 'javascript',
-        NOT: {
-          progressions: {
-            some: {
-              userId,
-              lastAttempt: { gte: today }
-            }
-          }
-        }
-      },
-      orderBy: {
-        lastUsed: 'asc'
-      }
-    })
+    const newProblem = await llmService.generateProblem(
+      domain.name,
+      topic.name,
+      targetDifficulty
+    );
 
-    if (fallbackProblem) {
-      await prisma.problem.update({
-        where: { id: fallbackProblem.id },
-        data: {
-          lastUsed: new Date(),
-          dailyUseCount: { increment: 1 },
-          totalUses: { increment: 1 }
-        }
-      })
-      
-      return { type: 'PROBLEM_FOUND' as const, problem: fallbackProblem }
-    }
-
-    // If we get here, we need to generate a new problem
-    console.log('No problems available, need to generate new one');
-    return { type: 'NEED_PRESEEDING' as const, difficulty: targetDifficulty, language: language || 'javascript' }
+    return { type: 'PROBLEM_FOUND' as const, problem: newProblem };
   }
 
-  async getAvailableProblemsCount(userId: string, language?: string | null) {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
+  async getAvailableProblemsCount(userId: string, domainId?: string) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     
     const attemptedToday = await prisma.problemProgression.count({
       where: {
         userId,
         lastAttempt: {
           gte: today
-        }
+        },
+        ...(domainId && {
+          problem: {
+            domainId
+          }
+        })
       }
-    })
+    });
 
     const availableProblems = await prisma.problem.count({
       where: {
-        language: language || 'javascript',
+        ...(domainId && { domainId }),
         NOT: {
           progressions: {
             some: {
@@ -174,106 +207,265 @@ export class PracticeScheduler {
           }
         }
       }
-    })
+    });
 
     return {
       attempted: attemptedToday,
       available: availableProblems,
       remaining: Math.max(0, DAILY_PROBLEM_LIMIT - attemptedToday)
+    };
+  }
+
+  // Get user's performance metrics for a specific domain
+  private async getUserMetrics(userId: string, domainId?: string) {
+    const progressions = await prisma.problemProgression.findMany({
+      where: {
+        userId,
+        ...(domainId && {
+          problem: {
+            domainId
+          }
+        })
+      },
+      include: {
+        problem: true
+      },
+      orderBy: {
+        lastAttempt: 'desc'
+      },
+      take: 10 // Look at last 10 problems
+    });
+
+    if (progressions.length === 0) {
+      return { averageScore: 0, averageTime: 0 };
     }
+
+    const scores = progressions.map(p => p.solved ? 1 : 0);
+    const times = progressions.map(p => p.timeSpent);
+
+    return {
+      averageScore: scores.reduce((a, b) => a + b, 0) / scores.length,
+      averageTime: times.reduce((a, b) => a + b, 0) / times.length
+    };
+  }
+
+  // Select difficulty based on user performance
+  private selectDifficulty(metrics: { averageScore: number; averageTime: number }): string {
+    const { averageScore } = metrics;
+    
+    if (averageScore < 0.3) return 'EASY';
+    if (averageScore < 0.7) return 'MEDIUM';
+    return 'HARD';
+  }
+
+  private readonly MIN_INTERVAL = 1; // 1 day
+  private readonly MAX_INTERVAL = 365; // 1 year
+  private readonly DEFAULT_EASE = 2.5;
+  private readonly EPSILON_DECAY = 0.995;
+
+  private async getUserReinforcementState(userId: string, domainId?: string): Promise<ReinforcementState> {
+    const userDomain = domainId ? await prisma.userDomain.findUnique({
+      where: { userId_domainId: { userId, domainId } },
+      include: {
+        progressions: {
+          take: 10,
+          orderBy: { lastAttempt: 'desc' },
+          select: { status: true }
+        }
+      }
+    }) : null;
+
+    const recentPerformance = userDomain?.progressions.map(p => p.status === 'COMPLETED' ? 1 : 0) || [];
+    
+    return {
+      skillLevel: userDomain?.skillLevel || 0,
+      conceptMastery: userDomain?.conceptMastery || {},
+      recentPerformance,
+      explorationRate: Math.max(0.1, 0.5 * Math.pow(this.EPSILON_DECAY, userDomain?.totalAttempts || 0))
+    };
+  }
+
+  private calculateNextReview(metrics: LearningMetrics, performance: number): LearningMetrics {
+    // SM-2 Algorithm with modifications
+    const newEaseFactor = metrics.easeFactor + (0.1 - (5 - performance) * (0.08 + (5 - performance) * 0.02));
+    const adjustedEase = Math.max(1.3, newEaseFactor);
+
+    let newInterval;
+    if (performance < 3) {
+      newInterval = this.MIN_INTERVAL;
+    } else if (metrics.interval === 0) {
+      newInterval = 1;
+    } else if (metrics.interval === 1) {
+      newInterval = 6;
+    } else {
+      newInterval = Math.min(this.MAX_INTERVAL, metrics.interval * adjustedEase);
+    }
+
+    return {
+      ...metrics,
+      easeFactor: adjustedEase,
+      interval: newInterval,
+      nextReview: new Date(Date.now() + newInterval * 24 * 60 * 60 * 1000)
+    };
+  }
+
+  private selectProblemRL(problems: any[], state: ReinforcementState): any {
+    // Epsilon-greedy strategy
+    if (Math.random() < state.explorationRate) {
+      // Exploration: try a random problem
+      return problems[Math.floor(Math.random() * problems.length)];
+    }
+
+    // Exploitation: select problem based on expected learning value
+    return problems.reduce((best, current) => {
+      const expectedValue = this.calculateExpectedValue(current, state);
+      if (!best || expectedValue > best.value) {
+        return { problem: current, value: expectedValue };
+      }
+      return best;
+    }, null)?.problem;
+  }
+
+  private calculateExpectedValue(problem: any, state: ReinforcementState): number {
+    const difficultyMatch = Math.exp(-Math.pow(problem.difficulty - state.skillLevel, 2) / 2);
+    const conceptValue = problem.concepts.reduce((sum: number, concept: string) => 
+      sum + (1 - (state.conceptMastery[concept] || 0)), 0) / problem.concepts.length;
+    const timeDecay = problem.lastAttempt ? 
+      Math.exp(-(Date.now() - new Date(problem.lastAttempt).getTime()) / (7 * 24 * 60 * 60 * 1000)) : 1;
+
+    return (0.4 * difficultyMatch + 0.4 * conceptValue + 0.2 * (1 - timeDecay));
+  }
+
+  async updateLearningMetrics(userId: string, problemId: string, performance: number) {
+    const progression = await prisma.problemProgression.findFirst({
+      where: { userId, problemId },
+      orderBy: { lastAttempt: 'desc' }
+    });
+
+    const currentMetrics: LearningMetrics = progression?.metrics || {
+      correctness: 0,
+      timeSpent: 0,
+      attemptsCount: 0,
+      lastReview: new Date(),
+      nextReview: new Date(),
+      easeFactor: this.DEFAULT_EASE,
+      interval: 0
+    };
+
+    const newMetrics = this.calculateNextReview(currentMetrics, performance);
+
+    // Update progression with new metrics
+    await prisma.problemProgression.update({
+      where: { id: progression.id },
+      data: { metrics: newMetrics }
+    });
+
+    // Update user's reinforcement learning state
+    const problem = await prisma.problem.findUnique({
+      where: { id: problemId },
+      select: { concepts: true, domainId: true }
+    });
+
+    await prisma.userDomain.update({
+      where: { 
+        userId_domainId: { 
+          userId, 
+          domainId: problem.domainId 
+        } 
+      },
+      data: {
+        conceptMastery: {
+          update: problem.concepts.reduce((acc, concept) => ({
+            ...acc,
+            [concept]: Math.min(1, ((acc[concept] || 0) + performance / 5) * 0.95)
+          }), {})
+        },
+        totalAttempts: { increment: 1 }
+      }
+    });
+
+    return newMetrics;
   }
 
   // Update problem and user metrics after an attempt
-  async updateProgression(
-    userId: string,
-    problemId: string,
-    isCorrect: boolean,
-    timeSpent: number
-  ) {
+  async updateProgression(userId: string, problemId: string, isCorrect: boolean, timeSpent: number) {
     const progression = await prisma.problemProgression.findUnique({
       where: {
         userId_problemId: { userId, problemId }
       },
       include: {
-        problem: true
+        problem: true,
+        user: true
       }
-    })
+    });
 
-    const xpGained = this.calculateXP(progression?.problem.difficulty || 'EASY', isCorrect, timeSpent)
+    // Calculate XP based on difficulty and performance
+    const xpGained = this.calculateXP(progression?.problem.difficulty || 'EASY', isCorrect, timeSpent);
+
+    // Update both user and domain XP
+    const updates = [
+      // Update user XP
+      prisma.user.update({
+        where: { id: userId },
+        data: {
+          xp: { increment: xpGained }
+        }
+      })
+    ];
+
+    // If problem is associated with a domain, update domain XP too
+    if (progression?.problem.domainId) {
+      updates.push(
+        prisma.userDomain.upsert({
+          where: {
+            userId_domainId: {
+              userId,
+              domainId: progression.problem.domainId
+            }
+          },
+          create: {
+            userId,
+            domainId: progression.problem.domainId,
+            xp: xpGained
+          },
+          update: {
+            xp: { increment: xpGained }
+          }
+        })
+      );
+    }
+
+    // Run all updates in parallel
+    await Promise.all(updates);
 
     if (!progression) {
       // Create new progression
-      return {
-        progression: await prisma.problemProgression.create({
-          data: {
-            userId,
-            problemId,
-            attempts: 1,
-            solved: isCorrect,
-            lastAttempt: new Date(),
-            timeSpent,
-            consecutiveCorrect: isCorrect ? 1 : 0,
-            rewardSignal: this.calculateReward(isCorrect, timeSpent),
-            stateVector: JSON.stringify({
-              attempts: 1,
-              timeSpent,
-              isCorrect
-            })
-          }
-        }),
-        xpGained
-      }
+      return await prisma.problemProgression.create({
+        data: {
+          userId,
+          problemId,
+          attempts: 1,
+          timeSpent,
+          solved: isCorrect,
+          consecutiveCorrect: isCorrect ? 1 : 0
+        }
+      });
     }
 
     // Update existing progression
-    const newConsecutiveCorrect = isCorrect 
-      ? progression.consecutiveCorrect + 1 
-      : 0
-
-    const reward = this.calculateReward(isCorrect, timeSpent)
-    
-    // Update problem metrics
-    await prisma.problem.update({
-      where: { id: problemId },
+    return await prisma.problemProgression.update({
+      where: {
+        id: progression.id
+      },
       data: {
-        successRate: {
-          set: (progression.problem.successRate * progression.problem.totalUses + (isCorrect ? 1 : 0)) / (progression.problem.totalUses + 1)
-        },
-        averageTime: {
-          set: (progression.problem.averageTime * progression.problem.totalUses + timeSpent) / (progression.problem.totalUses + 1)
-        },
-        adaptiveDifficulty: {
-          set: this.updateAdaptiveDifficulty(
-            progression.problem.adaptiveDifficulty,
-            isCorrect,
-            timeSpent
-          )
-        }
+        attempts: { increment: 1 },
+        timeSpent: { increment: timeSpent },
+        solved: isCorrect,
+        consecutiveCorrect: isCorrect 
+          ? { increment: 1 }
+          : 0
       }
-    })
-
-    return {
-      progression: await prisma.problemProgression.update({
-        where: {
-          userId_problemId: { userId, problemId }
-        },
-        data: {
-          attempts: { increment: 1 },
-          solved: isCorrect || progression.solved,
-          lastAttempt: new Date(),
-          timeSpent: { increment: timeSpent },
-          consecutiveCorrect: newConsecutiveCorrect,
-          rewardSignal: reward,
-          stateVector: JSON.stringify({
-            attempts: progression.attempts + 1,
-            timeSpent: progression.timeSpent + timeSpent,
-            consecutiveCorrect: newConsecutiveCorrect,
-            isCorrect
-          })
-        }
-      }),
-      xpGained
-    }
+    });
   }
 
   private calculateXP(difficulty: string, isCorrect: boolean, timeSpent: number): number {
@@ -281,69 +473,13 @@ export class PracticeScheduler {
       'EASY': 10,
       'MEDIUM': 20,
       'HARD': 30
-    }[difficulty] || 10
+    }[difficulty] || 10;
 
-    // Bonus XP for fast solutions (under 5 minutes)
-    const timeBonus = timeSpent < 300 ? Math.floor((300 - timeSpent) / 60) * 2 : 0
+    // Bonus for solving quickly (under 5 minutes)
+    const timeBonus = timeSpent < 300 ? 5 : 0;
     
-    return isCorrect ? baseXP + timeBonus : Math.floor(baseXP * 0.1)
-  }
-
-  private async getUserMetrics(userId: string) {
-    const progressions = await prisma.problemProgression.findMany({
-      where: { userId },
-      include: { problem: true },
-      orderBy: { lastAttempt: 'desc' },
-      take: 10 // Look at last 10 attempts
-    })
-
-    if (progressions.length === 0) {
-      return {
-        successRate: 0.5,
-        averageTime: 300,
-        adaptiveDifficulty: 1.0
-      }
-    }
-
-    return {
-      successRate: progressions.filter(p => p.solved).length / progressions.length,
-      averageTime: progressions.reduce((acc, p) => acc + p.timeSpent, 0) / progressions.length,
-      adaptiveDifficulty: progressions.reduce((acc, p) => acc + p.problem.adaptiveDifficulty, 0) / progressions.length
-    }
-  }
-
-  private selectDifficulty(metrics: ProblemMetrics) {
-    // Adjust difficulty based on success rate and speed
-    const performanceScore = metrics.successRate * (1 - metrics.averageTime / 600)
-    
-    if (performanceScore > 0.7) return 'HARD'
-    if (performanceScore > 0.4) return 'MEDIUM'
-    return 'EASY'
-  }
-
-  private calculateReward(isCorrect: boolean, timeSpent: number) {
-    // Base reward for solving the problem
-    let reward = isCorrect ? 1.0 : -0.2
-    
-    // Time bonus/penalty (normalized to expected time of 300 seconds)
-    const timeScore = Math.max(0, 1 - timeSpent / 300)
-    reward += isCorrect ? timeScore * 0.5 : 0
-    
-    return reward
-  }
-
-  private updateAdaptiveDifficulty(
-    currentDifficulty: number,
-    isCorrect: boolean,
-    timeSpent: number
-  ) {
-    const timeScore = Math.max(0, 1 - timeSpent / 300)
-    const performanceScore = isCorrect ? (1 + timeScore) / 2 : 0
-    
-    // Adjust difficulty based on performance
-    const adjustment = (performanceScore - 0.6) * 0.1
-    return Math.max(0.5, Math.min(2.0, currentDifficulty + adjustment))
+    return isCorrect ? baseXP + timeBonus : Math.floor(baseXP * 0.1);
   }
 }
 
-export const practiceScheduler = new PracticeScheduler()
+export const practiceScheduler = new PracticeScheduler();

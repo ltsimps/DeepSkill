@@ -36,7 +36,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     recentLanguages: [...new Set(metrics.map(m => m.problem.language))].slice(0, 3)
   };
 
-  return json({ stats, preferredLanguage: user?.preferredLanguage || 'javascript' });
+  return json({ stats, preferredLanguage: user?.preferredLanguage || 'python' });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -57,29 +57,13 @@ export default function Dashboard() {
   const { stats, preferredLanguage } = useLoaderData<typeof loader>();
   const user = useUser();
   const navigate = useNavigate();
-  const [selectedLanguage, setSelectedLanguage] = useState<ProgrammingLanguage>(() => preferredLanguage as ProgrammingLanguage);
-  const [isClient, setIsClient] = useState(false);
 
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
-
-  useEffect(() => {
-    if (isClient) {
-      setSelectedLanguage(preferredLanguage as ProgrammingLanguage);
-    }
-  }, [preferredLanguage, isClient]);
+  const handleStartPractice = () => {
+    navigate('/practice?language=python');
+  };
 
   return (
     <div className="flex min-h-screen bg-gradient-to-b from-gray-900 to-gray-800">
-      <ClientOnly fallback={<div className="w-64" />}>
-        <SidePanel
-          selectedLanguage={selectedLanguage}
-          onLanguageSelect={setSelectedLanguage}
-          userName={user.name}
-        />
-      </ClientOnly>
-
       <div className="flex-1">
         <nav className="bg-gray-800 border-b border-gray-700 px-4 py-3">
           <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -106,50 +90,59 @@ export default function Dashboard() {
         </nav>
 
         <main className="max-w-6xl mx-auto px-4 py-8">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Stats Section */}
-            <div className="lg:col-span-2 space-y-6">
-              <h2 className="text-2xl font-bold text-white mb-6">Your Progress</h2>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-gray-800/50 rounded-lg p-6 border border-gray-700">
-                  <h3 className="text-gray-400 mb-2">Problems Solved</h3>
-                  <p className="text-3xl font-bold text-white">{stats.problemsSolved}</p>
-                </div>
-                
-                <div className="bg-gray-800/50 rounded-lg p-6 border border-gray-700">
-                  <h3 className="text-gray-400 mb-2">Current Streak</h3>
-                  <p className="text-3xl font-bold text-white">{stats.streaks} days</p>
-                </div>
-                
-                <div className="bg-gray-800/50 rounded-lg p-6 border border-gray-700">
-                  <h3 className="text-gray-400 mb-2">Total Attempts</h3>
-                  <p className="text-3xl font-bold text-white">{stats.totalAttempts}</p>
-                </div>
-                
-                <div className="bg-gray-800/50 rounded-lg p-6 border border-gray-700">
-                  <h3 className="text-gray-400 mb-2">Avg. Time per Problem</h3>
-                  <p className="text-3xl font-bold text-white">{Math.round(stats.averageTime)}s</p>
-                </div>
-              </div>
-
-              <div className="bg-gray-800/50 rounded-lg p-6 border border-gray-700">
-                <h3 className="text-xl font-semibold text-white mb-4">Quick Start</h3>
-                <Button
-                  onClick={() => navigate(`/practice?language=${selectedLanguage}`)}
-                  className="w-full bg-blue-500 hover:bg-blue-600 text-white py-3 rounded-lg font-medium"
+          <div className="grid grid-cols-1 gap-8">
+            {/* Epic Call to Action */}
+            <div className="relative overflow-hidden bg-gradient-to-br from-blue-600 via-purple-600 to-violet-600 rounded-2xl p-8 border border-purple-500/20 shadow-2xl">
+              <div className="absolute inset-0 bg-grid-white/10 [mask-image:linear-gradient(0deg,transparent,black)]" />
+              <div className="relative z-10">
+                <h2 className="text-4xl font-bold text-white mb-4 animate-fade-in">Ready to Level Up?</h2>
+                <p className="text-xl text-white/80 mb-8">Your next coding challenge awaits. Dive in and start mastering Python!</p>
+                <button
+                  onClick={handleStartPractice}
+                  className="w-full bg-white/10 backdrop-blur-sm hover:bg-white/20 text-white text-xl font-bold py-6 px-8 rounded-xl transition-all duration-300 ease-in-out transform hover:scale-105 hover:shadow-lg border border-white/20 group"
                 >
-                  Start Practicing {selectedLanguage.charAt(0).toUpperCase() + selectedLanguage.slice(1)}
-                </Button>
+                  <span className="flex items-center justify-center gap-3">
+                    Start Practicing
+                    <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-300">→</span>
+                  </span>
+                </button>
               </div>
+              
+              {/* Animated Background Elements */}
+              <div className="absolute top-0 left-0 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob" />
+              <div className="absolute top-0 right-0 w-72 h-72 bg-blue-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-2000" />
+              <div className="absolute bottom-0 left-1/2 w-72 h-72 bg-violet-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-blob animation-delay-4000" />
             </div>
 
-            {/* Chat Bot Section */}
-            <div className="lg:col-span-1">
-              <ClientOnly fallback={<div className="h-[500px] bg-gray-800/50 rounded-lg border border-gray-700" />}>
-                <ChatBot onLanguageSelect={setSelectedLanguage} />
-              </ClientOnly>
+            {/* Stats Grid - Now below the CTA */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-gray-800/50 backdrop-blur-sm rounded-lg p-6 border border-gray-700">
+                <h3 className="text-gray-400 mb-2">Problems Solved</h3>
+                <p className="text-3xl font-bold text-white">{stats.problemsSolved}</p>
+              </div>
+              
+              <div className="bg-gray-800/50 backdrop-blur-sm rounded-lg p-6 border border-gray-700">
+                <h3 className="text-gray-400 mb-2">Current Streak</h3>
+                <p className="text-3xl font-bold text-white">{stats.streaks} days</p>
+              </div>
+              
+              <div className="bg-gray-800/50 backdrop-blur-sm rounded-lg p-6 border border-gray-700">
+                <h3 className="text-gray-400 mb-2">Total Attempts</h3>
+                <p className="text-3xl font-bold text-white">{stats.totalAttempts}</p>
+              </div>
+              
+              <div className="bg-gray-800/50 backdrop-blur-sm rounded-lg p-6 border border-gray-700">
+                <h3 className="text-gray-400 mb-2">Avg. Time per Problem</h3>
+                <p className="text-3xl font-bold text-white">{Math.round(stats.averageTime)}s</p>
+              </div>
             </div>
+          </div>
+
+          {/* Chat Bot Section */}
+          <div className="lg:col-span-1">
+            <ClientOnly fallback={<div className="h-[500px] bg-gray-800/50 rounded-lg border border-gray-700" />}>
+              <ChatBot />
+            </ClientOnly>
           </div>
         </main>
       </div>

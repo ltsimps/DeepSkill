@@ -54,7 +54,7 @@ describe('Practice Route Action', () => {
       formData.append('problemId', '123');
       formData.append('sessionId', '456');
       formData.append('solution', 'test solution');
-      formData.append('language', 'javascript');
+      formData.append('language', 'python');
       formData.append('startTime', Date.now().toString());
       formData.append('isSessionComplete', 'false');
 
@@ -66,7 +66,7 @@ describe('Practice Route Action', () => {
       // Mock database responses
       prisma.problem.findUnique.mockResolvedValue({
         id: '123',
-        language: 'javascript'
+        language: 'python'
       });
 
       prisma.sessionProblem.update.mockResolvedValue({
@@ -94,7 +94,7 @@ describe('Practice Route Action', () => {
       formData.append('problemId', '123');
       formData.append('sessionId', '456');
       formData.append('solution', 'test solution');
-      formData.append('language', 'javascript');
+      formData.append('language', 'python');
       formData.append('startTime', Date.now().toString());
       formData.append('isSessionComplete', 'true');
 
@@ -106,7 +106,7 @@ describe('Practice Route Action', () => {
       // Mock database responses
       prisma.problem.findUnique.mockResolvedValue({
         id: '123',
-        language: 'javascript',
+        language: 'python',
         difficulty: 'EASY'
       });
 
@@ -114,7 +114,7 @@ describe('Practice Route Action', () => {
         {
           problemId: '123',
           problem: { 
-            language: 'javascript', 
+            language: 'python', 
             solution: 'correct solution',
             difficulty: 'EASY'
           },
@@ -152,7 +152,7 @@ describe('Practice Route Action', () => {
       // Setup
       const formData = new FormData();
       formData.append('intent', 'startSession');
-      formData.append('language', 'javascript');
+      formData.append('language', 'python');
 
       const request = new Request('http://test.com', {
         method: 'POST',

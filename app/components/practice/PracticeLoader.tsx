@@ -1,25 +1,15 @@
 import { motion } from 'framer-motion';
 
-interface PracticeLoaderProps {
-  isNewlyGenerated: boolean;
-}
-
-export function PracticeLoader({ isNewlyGenerated }: PracticeLoaderProps) {
-  const messages = isNewlyGenerated
-    ? [
-        "Generating practice problems...",
-        "Creating personalized exercises...",
-        "Preparing your coding challenges...",
-        "Almost ready..."
-      ]
-    : [
-        "Loading practice session...",
-        "Preparing your exercises...",
-        "Almost ready..."
-      ];
+export function PracticeLoader() {
+  const messages = [
+    "Loading your practice session...",
+    "Preparing coding challenges...",
+    "Setting up your workspace...",
+    "Almost ready..."
+  ];
 
   return (
-    <div className="fixed inset-0 bg-gray-900/90 backdrop-blur-sm flex items-center justify-center z-50">
+    <div className="h-full w-full bg-gray-900/90 backdrop-blur-sm flex items-center justify-center">
       <div className="max-w-md w-full mx-4">
         <div className="bg-gray-800 rounded-lg p-8 border border-gray-700">
           {/* Code Editor Animation */}
@@ -91,7 +81,7 @@ export function PracticeLoader({ isNewlyGenerated }: PracticeLoaderProps) {
             transition={{ duration: 0.5 }}
           >
             <motion.div
-              className="h-full bg-gradient-to-r from-blue-500 to-purple-500"
+              className="h-full bg-gradient-to-r from-purple-600 to-blue-600"
               initial={{ width: "0%" }}
               animate={{ width: "100%" }}
               transition={{

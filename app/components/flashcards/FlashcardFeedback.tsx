@@ -24,7 +24,7 @@ export function FlashcardFeedback({
           }`}
         >
           <Icon
-            name={isCorrect ? 'check' : 'x'}
+            name={isCorrect ? 'check' : 'cross-1'}
             className="h-5 w-5 mt-0.5"
           />
           <div>

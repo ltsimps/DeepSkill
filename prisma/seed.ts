@@ -11,7 +11,7 @@ function createProblem(
   const topics = {
     arrays: {
       name: 'Array Operations',
-      description: (lang: string) => `Implement a function that ${['finds the maximum element', 'calculates the sum', 'reverses the array', 'finds duplicate elements'][index % 4]} in an array.`,
+      description: (lang: string) => `Implement a function that ${['finds the maximum element', 'calculates the sum', 'reverses the array', 'finds duplicate elements', 'finds two numbers that sum to target', 'finds the longest subarray', 'rotates array by k steps', 'merges two sorted arrays'][index % 8]} in an array.`,
       template: {
         'C++': `vector<int> arr = {1, 2, 3, 4, 5};`,
         'PYTHON': `arr = [1, 2, 3, 4, 5]`
@@ -19,7 +19,7 @@ function createProblem(
     },
     strings: {
       name: 'String Manipulation',
-      description: (lang: string) => `Create a function that ${['checks if a string is palindrome', 'counts character frequency', 'reverses words in a sentence', 'removes duplicate characters'][index % 4]}.`,
+      description: (lang: string) => `Create a function that ${['checks if a string is palindrome', 'counts character frequency', 'reverses words in a sentence', 'removes duplicate characters', 'finds longest substring without repeating chars', 'generates all permutations', 'finds longest common prefix', 'implements string compression'][index % 8]}.`,
       template: {
         'C++': `string str = "example";`,
         'PYTHON': `text = "example"`
@@ -27,7 +27,7 @@ function createProblem(
     },
     math: {
       name: 'Mathematical Problems',
-      description: (lang: string) => `Implement a function that ${['calculates factorial', 'finds prime numbers', 'computes Fibonacci sequence', 'calculates GCD'][index % 4]}.`,
+      description: (lang: string) => `Implement a function that ${['calculates factorial', 'finds prime numbers', 'computes Fibonacci sequence', 'calculates GCD', 'finds square root', 'checks if number is power of two', 'calculates combination nCr', 'solves linear equations'][index % 8]}.`,
       template: {
         'C++': `int n = 10;`,
         'PYTHON': `n = 10`
@@ -35,10 +35,18 @@ function createProblem(
     },
     sorting: {
       name: 'Sorting Algorithms',
-      description: (lang: string) => `Implement ${['bubble sort', 'quick sort', 'merge sort', 'insertion sort'][index % 4]} algorithm.`,
+      description: (lang: string) => `Implement ${['bubble sort', 'quick sort', 'merge sort', 'insertion sort', 'heap sort', 'counting sort', 'radix sort', 'bucket sort'][index % 8]} algorithm.`,
       template: {
         'C++': `vector<int> arr = {5, 2, 8, 1, 9};`,
         'PYTHON': `arr = [5, 2, 8, 1, 9]`
+      }
+    },
+    datastructures: {
+      name: 'Data Structures',
+      description: (lang: string) => `Implement ${['stack using arrays', 'queue using linked list', 'binary search tree', 'min heap', 'hash table', 'trie for strings', 'graph using adjacency list', 'LRU cache'][index % 8]}.`,
+      template: {
+        'C++': `class DataStructure {\n    // Implement your solution here\n};`,
+        'PYTHON': `class DataStructure:\n    # Implement your solution here\n    pass`
       }
     }
   }
@@ -47,6 +55,29 @@ function createProblem(
   const problemNumber = index + 1
   const difficultyPrefix = difficulty[0] + String(problemNumber).padStart(2, '0')
   
+  const testCases = {
+    arrays: [
+      { input: "[1, 2, 3, 4, 5]", expectedOutput: "5", description: "Basic test case" },
+      { input: "[-1, -5, 0, 10, 100]", expectedOutput: "100", description: "With negative numbers" }
+    ],
+    strings: [
+      { input: '"racecar"', expectedOutput: "true", description: "Basic palindrome" },
+      { input: '"hello world"', expectedOutput: "false", description: "Non-palindrome" }
+    ],
+    math: [
+      { input: "5", expectedOutput: "120", description: "Factorial of 5" },
+      { input: "0", expectedOutput: "1", description: "Edge case" }
+    ],
+    sorting: [
+      { input: "[5, 2, 8, 1, 9]", expectedOutput: "[1, 2, 5, 8, 9]", description: "Basic sorting" },
+      { input: "[]", expectedOutput: "[]", description: "Empty array" }
+    ],
+    datastructures: [
+      { input: "push(1), push(2), pop()", expectedOutput: "2", description: "Basic operations" },
+      { input: "isEmpty()", expectedOutput: "false", description: "State check" }
+    ]
+  }
+
   return {
     title: `${topic.name} #${problemNumber}`,
     difficulty,
@@ -56,9 +87,7 @@ function createProblem(
     problem: `Given ${topic.template[language]}, implement the solution.`,
     startingCode: topic.template[language],
     solution: topic.template[language], // We'll add proper solutions later
-    testCases: JSON.stringify([
-      { input: "example input", expectedOutput: "example output", description: "Basic test case" }
-    ]),
+    testCases: JSON.stringify(testCases[Object.keys(topics)[index % Object.keys(topics).length]]),
     hints: JSON.stringify([
       "Think about edge cases",
       "Consider time complexity",
@@ -133,9 +162,9 @@ async function seed() {
 
   const languages = ['C++', 'PYTHON']
   const difficulties = {
-    'EASY': 40,    // 40% of problems
-    'MEDIUM': 40,  // 40% of problems
-    'HARD': 20     // 20% of problems
+    'EASY': 100,    // 40% of problems
+    'MEDIUM': 150,  // 40% of problems
+    'HARD': 150     // 20% of problems
   }
 
   for (const language of languages) {

@@ -15,9 +15,13 @@ export function ChatBot({ onLanguageSelect }: ChatBotProps) {
   const { messages, input, handleInputChange, handleSubmit, setMessages } = useChat({
     api: '/api/chat',
     onFinish: (message) => {
-      const languageMatch = message.content.match(/\b(javascript|python|typescript)\b/i);
+      // Only detect Python language
+      const languageMatch = message.content.match(/\bpython\b/i);
       if (languageMatch) {
-        onLanguageSelect(languageMatch[0].toLowerCase());
+        const language = languageMatch[0].toLowerCase();
+        if (language === 'python') {
+          onLanguageSelect(language);
+        }
       }
     }
   });
@@ -38,7 +42,7 @@ export function ChatBot({ onLanguageSelect }: ChatBotProps) {
   const handleStartPractice = () => {
     const lastMessage = messages[messages.length - 1];
     if (lastMessage?.role === 'assistant') {
-      const languageMatch = lastMessage.content.match(/\b(javascript|python|typescript)\b/i);
+      const languageMatch = lastMessage.content.match(/\bpython\b/i);
       if (languageMatch) {
         navigate(`/practice?language=${languageMatch[0].toLowerCase()}`);
       } else {

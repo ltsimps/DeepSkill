@@ -87,7 +87,7 @@ export function PracticeInterface({ problem, onSubmit, feedback }: PracticeInter
           <div className="bg-gray-800/50 rounded-lg p-6 backdrop-blur-sm border border-gray-700">
             <Editor
               height="300px"
-              defaultLanguage={problem.language || 'javascript'}
+              defaultLanguage={problem.language || 'python'}
               theme="vs-dark"
               value={code}
               onChange={(value) => setCode(value || '')}

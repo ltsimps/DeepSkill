@@ -1,9 +1,4 @@
 import { Link, useLocation } from '@remix-run/react';
-import { Button } from '../ui/button';
-import { LanguageDropdown } from '../common/LanguageDropdown';
-import { Avatar } from '../common/Avatar';
-import { ProgrammingLanguage } from '../../utils/language';
-import { cn } from '../../lib/utils';
 import { 
   LayoutDashboard, 
   Code2, 
@@ -12,11 +7,17 @@ import {
   BookOpen,
   GraduationCap
 } from 'lucide-react';
+import { cn } from '../../lib/utils';
+import { type SupportedLanguage } from '../../utils/language';
+import { Avatar } from '../common/Avatar';
+import { LanguageDropdown } from '../common/LanguageDropdown';
+import { Button } from '../ui/button';
+import { useState } from 'react';
 
 interface SidePanelProps {
   className?: string;
-  selectedLanguage: ProgrammingLanguage;
-  onLanguageSelect: (language: ProgrammingLanguage) => void;
+  selectedLanguage: SupportedLanguage;
+  onLanguageSelect: (language: SupportedLanguage) => void;
   userName?: string;
 }
 
@@ -27,6 +28,7 @@ export function SidePanel({
   userName = 'User'
 }: SidePanelProps) {
   const location = useLocation();
+  const [selectedLanguage, setSelectedLanguage] = useState<SupportedLanguage>('python');
   const menuItems = [
     { icon: LayoutDashboard, label: 'Dashboard', href: '/dashboard' },
     { icon: Code2, label: 'Practice', href: '/practice' },
@@ -53,7 +55,7 @@ export function SidePanel({
         <h3 className="text-gray-400 text-sm font-medium mb-2">Preferred Language</h3>
         <LanguageDropdown
           selectedLanguage={selectedLanguage}
-          onLanguageSelect={onLanguageSelect}
+          onLanguageSelect={(language) => setSelectedLanguage(language)}
           className="w-full"
         />
       </div>
